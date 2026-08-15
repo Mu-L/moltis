@@ -446,6 +446,7 @@ ios-graphql:
 
 # Build iOS app (generic iOS destination, no signing).
 ios-build: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     xcodebuild -project apps/ios/Moltis.xcodeproj -scheme Moltis -configuration Debug -destination "generic/platform=iOS" CODE_SIGNING_ALLOWED=NO build
 
 # Lint iOS app sources with SwiftLint.
@@ -454,6 +455,7 @@ ios-lint:
 
 # Open iOS project in Xcode (regenerates GraphQL types and project first).
 ios-open: ios-generate ios-graphql
+    ./scripts/generate-ios-project.sh
     open apps/ios/Moltis.xcodeproj
 
 # Build the APNS push relay.
