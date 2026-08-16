@@ -71,6 +71,7 @@ anyhow                  = { workspace = true }
 async-trait             = { workspace = true }
 clap                    = { workspace = true }
 dotenvy                 = { workspace = true }
+indicatif               = { workspace = true }
 moltis-acp              = { optional = true, workspace = true }
 moltis-agents           = { workspace = true }
 moltis-browser          = { workspace = true }
@@ -88,6 +89,7 @@ moltis-import-core      = { workspace = true }
 moltis-mcp              = { optional = true, workspace = true }
 moltis-mcp-agent-bridge = { optional = true, workspace = true }
 moltis-memory           = { workspace = true }
+moltis-memory-zvec      = { optional = true, workspace = true }
 moltis-node-host        = { workspace = true }
 moltis-oauth            = { workspace = true }
 moltis-onboarding       = { workspace = true }
@@ -216,6 +218,7 @@ full = [
   "wasm",
   "web-ui",
   "whatsapp",
+  "zvec",
 ]
 llm-compaction = ["moltis-gateway/llm-compaction"]
 # Minimal build for memory-constrained devices (Raspberry Pi, etc.).
@@ -292,6 +295,7 @@ voice = ["moltis-gateway/voice", "moltis-web?/voice"]
 wasm = ["moltis-tools/wasm"]
 web-ui = ["dep:moltis-web", "moltis-httpd/web-ui"]
 whatsapp = ["moltis-gateway/whatsapp"]
+zvec = ["dep:moltis-memory-zvec", "moltis-gateway/zvec"]
 
 [lints]
 workspace = true
