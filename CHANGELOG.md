@@ -19,6 +19,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260816.01] - 2026-08-16
+### Added
+- [slack] Acknowledge messages with reactions and add reaction triggers (#1165)
+- [website] Add install command copy controls
+- [pwa] Make push notifications reliable and non-disruptive (#1173)
+- [acp] Expose Moltis as an ACP agent over stdio (#1169)
+- [slack] Per-message acknowledgment reactions, phases, reconnect supervision, and Block Kit (#1166)
+- [web] Add Markdown copy and session export (#1176)
+- [nostr] Add NIP-29 group chat support for Buzz channels (#1168)
+- Add instrumentation and feedback collection infrastructure (#1174)
+- Add Slack native live task cards (#1195)
+- Add durable calendar, channel, and email connectors (#1190)
+- [memory] Add zvec vector database memory backend (#1158)
+- Start agent chats from the command palette (#1197)
+
+
+### Changed
+- Move ACP selection into the chat model picker (#1171)
+- Route OpenAI reasoning tool calls through Responses (#1198)
+
+
+### Fixed
+- [scripts] Target local validation tests
+- [web] Hide archived cron sessions by default (#1172)
+- [ios] Refresh Apollo package resolution
+- [channels] Gate /sh and privileged tools behind a per-account operators list (#1170)
+- Fix Docker sandbox filesystem tool fallback (#1105)
+- Fix ClawHub skill search results (#1196)
+- [ios] Stabilize GraphQL project generation
+- [scripts] Guard empty bash array expansions for macOS bash 3.2 (#1194)
+- [sessions] Allow deleting and archiving the main session (#1182)
+- [skills] Point wacrawl install metadata at the openclaw org (#1192)
+- [sandbox] Point gogcli module path at the openclaw org (#1191)
+- [gateway] Verify node pairing signatures (#1179)
+- Fix(security): harden model and zip paths (#1180)
+- [vault] Normalize recovery phrase before hashing (#1186)
+- Restore local validation on main
+- [gateway] Thread start_background_tasks into the memory runtime builder (#1201)
+- [caldav] Honor list_events time ranges (#1147)
+
 ## [20260723.03] - 2026-07-23
 ### Added
 - Add context command support for chat turns (#1124)
