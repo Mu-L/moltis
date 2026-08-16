@@ -841,13 +841,31 @@ pub struct ChannelHealthSnapshot {
     pub extra: Option<serde_json::Value>,
 }
 
-/// Stream event for edit-in-place streaming.
+/// Lifecycle state for a user-visible task in a channel stream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChannelTaskStatus {
+    InProgress,
+    Complete,
+    Error,
+}
+
+/// A channel-neutral task update emitted while an agent uses a tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ChannelTaskUpdate {
+    pub id: String,
+    pub title: String,
+    pub status: ChannelTaskStatus,
+}
+
+/// Stream event for incremental channel responses.
 #[derive(Debug, Clone)]
 pub enum StreamEvent {
     /// A chunk of final reply text to append.
     Delta(String),
     /// A chunk of intermediate progress text to append.
     ProgressDelta(String),
+    /// A structured task lifecycle update.
+    TaskUpdate(ChannelTaskUpdate),
     /// Stream is complete.
     Done,
     /// An error occurred.
@@ -904,12 +922,25 @@ pub trait ChannelStreamOutbound: Send + Sync {
         true
     }
 
+    /// Whether any successful stream result is itself a complete delivery.
+    ///
+    /// This lets a stream retain a user-visible terminal error and suppress the
+    /// normal fallback even when no final reply delta was emitted.
+    async fn claims_stream_delivery(&self, _account_id: &str, _reply_to: Option<&str>) -> bool {
+        false
+    }
+
     /// Whether this stream consumes progress deltas separately from final text.
     ///
     /// Channels that only append streamed text should leave this disabled to
     /// avoid receiving the same pre-tool draft once as final text and again as
     /// reclassified progress.
     async fn receives_progress_deltas(&self, _account_id: &str) -> bool {
+        false
+    }
+
+    /// Whether this stream renders structured task lifecycle updates.
+    async fn receives_task_updates(&self, _account_id: &str) -> bool {
         false
     }
 }

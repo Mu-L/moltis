@@ -583,11 +583,27 @@ impl ChannelStreamOutbound for RegistryOutboundRouter {
         stream_out.streams_final_replies(account_id).await
     }
 
+    async fn claims_stream_delivery(&self, account_id: &str, reply_to: Option<&str>) -> bool {
+        let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
+            return false;
+        };
+        stream_out
+            .claims_stream_delivery(account_id, reply_to)
+            .await
+    }
+
     async fn receives_progress_deltas(&self, account_id: &str) -> bool {
         let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
             return false;
         };
         stream_out.receives_progress_deltas(account_id).await
+    }
+
+    async fn receives_task_updates(&self, account_id: &str) -> bool {
+        let Some(stream_out) = self.registry.resolve_stream(account_id).await else {
+            return false;
+        };
+        stream_out.receives_task_updates(account_id).await
     }
 }
 
@@ -639,7 +655,9 @@ mod tests {
         accounts: std::sync::Mutex<HashMap<String, serde_json::Value>>,
         outbound: NullOutbound,
         streams_final_replies: bool,
+        claims_stream_delivery: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     impl TestPlugin {
@@ -649,7 +667,9 @@ mod tests {
                 accounts: std::sync::Mutex::new(HashMap::new()),
                 outbound: NullOutbound,
                 streams_final_replies: true,
+                claims_stream_delivery: false,
                 receives_progress_deltas: false,
+                receives_task_updates: false,
             }
         }
 
@@ -659,7 +679,9 @@ mod tests {
                 accounts: std::sync::Mutex::new(HashMap::new()),
                 outbound: NullOutbound,
                 streams_final_replies: false,
+                claims_stream_delivery: true,
                 receives_progress_deltas: true,
+                receives_task_updates: true,
             }
         }
     }
@@ -730,7 +752,9 @@ mod tests {
         fn shared_stream_outbound(&self) -> Arc<dyn ChannelStreamOutbound> {
             Arc::new(NullStreamOutbound {
                 streams_final_replies: self.streams_final_replies,
+                claims_stream_delivery: self.claims_stream_delivery,
                 receives_progress_deltas: self.receives_progress_deltas,
+                receives_task_updates: self.receives_task_updates,
             })
         }
     }
@@ -791,7 +815,9 @@ mod tests {
 
     struct NullStreamOutbound {
         streams_final_replies: bool,
+        claims_stream_delivery: bool,
         receives_progress_deltas: bool,
+        receives_task_updates: bool,
     }
 
     #[async_trait]
@@ -828,6 +854,14 @@ mod tests {
 
         async fn receives_progress_deltas(&self, _: &str) -> bool {
             self.receives_progress_deltas
+        }
+
+        async fn claims_stream_delivery(&self, _: &str, _: Option<&str>) -> bool {
+            self.claims_stream_delivery
+        }
+
+        async fn receives_task_updates(&self, _: &str) -> bool {
+            self.receives_task_updates
         }
     }
 
@@ -1067,7 +1101,9 @@ mod tests {
         let router = RegistryOutboundRouter::new(Arc::clone(&registry));
 
         assert!(!router.streams_final_replies("bot1").await);
+        assert!(router.claims_stream_delivery("bot1", Some("reply")).await);
         assert!(router.receives_progress_deltas("bot1").await);
+        assert!(router.receives_task_updates("bot1").await);
     }
 
     #[tokio::test]
