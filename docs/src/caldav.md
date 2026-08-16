@@ -248,12 +248,18 @@ Returns: `href`, `display_name`, `color`, `description` for each calendar.
 ### `list_events`
 
 Lists events in a specific calendar, optionally filtered by date range.
+When both `start` and `end` are given, the filter runs server-side as a
+CalDAV `calendar-query` REPORT with a `time-range` element (RFC 4791), so
+only events intersecting the window are fetched. Recurring resources are
+expanded by the server for that window, so results contain the matching
+occurrences rather than an out-of-range recurrence master. If either bound is
+omitted, all events are returned without recurrence expansion.
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `calendar` | yes | Calendar href (from `list_calendars`) |
-| `start` | no | ISO 8601 start date/time |
-| `end` | no | ISO 8601 end date/time |
+| `start` | no | ISO 8601 start date/time (naive times are treated as UTC) |
+| `end` | no | ISO 8601 end date/time (naive times are treated as UTC) |
 
 Returns: `href`, `etag`, `uid`, `summary`, `start`, `end`, `all_day`,
 `location` for each event.

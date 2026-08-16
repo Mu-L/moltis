@@ -320,6 +320,68 @@ impl LibDavCalDavClient {
     }
 }
 
+/// Build the server-side `calendar-query` REPORT that filters a collection
+/// by VEVENT time range.
+///
+/// Per RFC 4791 the `time-range` element must sit inside
+/// `comp-filter name="VEVENT"`, nested in `comp-filter name="VCALENDAR"` —
+/// servers (e.g. Nextcloud) silently ignore filters at the wrong level.
+/// `start`/`end` must be iCalendar UTC basic format (`YYYYMMDDTHHMMSSZ`).
+fn build_time_range_query<'a>(
+    calendar_href: &'a str,
+    start: &'a str,
+    end: &'a str,
+) -> Result<libdav::caldav::ListCalendarResources<'a>> {
+    libdav::caldav::ListCalendarResources::new(calendar_href)
+        .with_component_and_time_range("VEVENT", Some(start), Some(end))
+        .map_err(|e| Error::Validation(format!("invalid time-range filter: {e}")))
+}
+
+struct GetExpandedCalendarResources<'a> {
+    inner: libdav::caldav::GetCalendarResources<'a>,
+    start: &'a str,
+    end: &'a str,
+}
+
+impl<'a> GetExpandedCalendarResources<'a> {
+    fn new(collection_href: &'a str, hrefs: &[String], start: &'a str, end: &'a str) -> Self {
+        Self {
+            inner: libdav::caldav::GetCalendarResources::new(collection_href).with_hrefs(hrefs),
+            start,
+            end,
+        }
+    }
+}
+
+impl libdav::requests::DavRequest for GetExpandedCalendarResources<'_> {
+    type Error<E> = libdav::dav::WebDavError<E>;
+    type ParseError = libdav::requests::ParseResponseError;
+    type Response = libdav::caldav::GetCalendarResourcesResponse;
+
+    fn prepare_request(
+        &self,
+    ) -> std::result::Result<libdav::requests::PreparedRequest, http::Error> {
+        let mut request = self.inner.prepare_request()?;
+        request.body = request.body.replacen(
+            "<C:calendar-data/>",
+            &format!(
+                r#"<C:calendar-data><C:expand start="{}" end="{}"/></C:calendar-data>"#,
+                self.start, self.end
+            ),
+            1,
+        );
+        Ok(request)
+    }
+
+    fn parse_response(
+        &self,
+        parts: &http::response::Parts,
+        body: &[u8],
+    ) -> std::result::Result<Self::Response, Self::ParseError> {
+        self.inner.parse_response(parts, body)
+    }
+}
+
 async fn resolve_uri_addresses(uri: &http::Uri) -> Result<Vec<SocketAddr>> {
     let host = uri
         .host()
@@ -445,16 +507,61 @@ impl CalDavClient for LibDavCalDavClient {
     async fn list_events(
         &self,
         calendar_href: &str,
-        _range: Option<TimeRange>,
+        range: Option<TimeRange>,
     ) -> Result<Vec<EventSummary>> {
-        // Fetch all calendar resources (iCal data + etags)
-        let response = self
-            .protocol(
-                "fetch calendar resources",
-                self.inner
-                    .request(libdav::caldav::GetCalendarResources::new(calendar_href)),
-            )
-            .await?;
+        // With a range, ask the server which resources match first
+        // (calendar-query REPORT with a VCALENDAR > VEVENT time-range
+        // filter), then fetch only those via calendar-multiget. Without a
+        // range, fetch everything in the collection.
+        let matching_resources = match &range {
+            Some(r) => {
+                let start = crate::time_filter::to_ical_utc(&r.start)?;
+                let end = crate::time_filter::to_ical_utc(&r.end)?;
+                let listed = self
+                    .protocol(
+                        "query calendar time range",
+                        self.inner
+                            .request(build_time_range_query(calendar_href, &start, &end)?),
+                    )
+                    .await?;
+                if listed.resources.is_empty() {
+                    return Ok(Vec::new());
+                }
+                Some((
+                    start,
+                    end,
+                    listed
+                        .resources
+                        .into_iter()
+                        .map(|resource| resource.href)
+                        .collect::<Vec<_>>(),
+                ))
+            },
+            None => None,
+        };
+
+        let response = match &matching_resources {
+            Some((start, end, hrefs)) => {
+                self.protocol(
+                    "fetch expanded calendar resources",
+                    self.inner.request(GetExpandedCalendarResources::new(
+                        calendar_href,
+                        hrefs,
+                        start,
+                        end,
+                    )),
+                )
+                .await?
+            },
+            None => {
+                self.protocol(
+                    "fetch calendar resources",
+                    self.inner
+                        .request(libdav::caldav::GetCalendarResources::new(calendar_href)),
+                )
+                .await?
+            },
+        };
 
         let mut events = Vec::new();
         for resource in &response.resources {
@@ -695,7 +802,115 @@ mod tests {
         hyper_util::rt::TokioIo,
     };
 
-    use super::*;
+    use {super::*, libdav::requests::DavRequest};
+
+    #[test]
+    fn time_range_query_nests_time_range_under_vcalendar_vevent() {
+        let query =
+            build_time_range_query("/cal/personal/", "20260101T000000Z", "20260201T000000Z")
+                .unwrap();
+        let prepared = query.prepare_request().unwrap();
+
+        assert_eq!(
+            prepared.method,
+            http::Method::from_bytes(b"REPORT").unwrap()
+        );
+        assert!(prepared.body.contains(concat!(
+            r#"<C:comp-filter name="VCALENDAR">"#,
+            r#"<C:comp-filter name="VEVENT">"#,
+            r#"<C:time-range start="20260101T000000Z" end="20260201T000000Z"/>"#,
+            r#"</C:comp-filter></C:comp-filter>"#,
+        )));
+    }
+
+    #[test]
+    fn expanded_resource_query_uses_requested_range() {
+        let request = GetExpandedCalendarResources::new(
+            "/cal/personal/",
+            &["/cal/personal/series.ics".to_string()],
+            "20260201T000000Z",
+            "20260301T000000Z",
+        );
+        let prepared = request.prepare_request().unwrap();
+
+        assert!(prepared.body.contains(concat!(
+            r#"<C:calendar-data><C:expand start="20260201T000000Z" "#,
+            r#"end="20260301T000000Z"/></C:calendar-data>"#,
+        )));
+        assert!(
+            prepared
+                .body
+                .contains("<D:href>/cal/personal/series.ics</D:href>")
+        );
+    }
+
+    #[test]
+    fn expanded_resource_response_returns_recurring_occurrence_in_range() {
+        let request = GetExpandedCalendarResources::new(
+            "/cal/personal/",
+            &["/cal/personal/series.ics".to_string()],
+            "20260201T000000Z",
+            "20260301T000000Z",
+        );
+        let response = Response::builder()
+            .status(http::StatusCode::MULTI_STATUS)
+            .body(())
+            .unwrap();
+        let (parts, ()) = response.into_parts();
+        let body = br#"<?xml version="1.0" encoding="utf-8"?>
+<multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <response>
+    <href>/cal/personal/series.ics</href>
+    <propstat>
+      <prop>
+        <getetag>"series-etag"</getetag>
+        <C:calendar-data>BEGIN:VCALENDAR
+VERSION:2.0
+BEGIN:VEVENT
+UID:daily-series@example.test
+RECURRENCE-ID:20260205T090000Z
+SUMMARY:Daily standup
+DTSTART:20260205T090000Z
+DTEND:20260205T093000Z
+END:VEVENT
+END:VCALENDAR
+</C:calendar-data>
+      </prop>
+      <status>HTTP/1.1 200 OK</status>
+    </propstat>
+  </response>
+</multistatus>"#;
+
+        let fetched = request.parse_response(&parts, body).unwrap();
+        let content = fetched.resources[0].content.as_ref().unwrap();
+        let events =
+            crate::ical::parse_events(&content.data, &fetched.resources[0].href, &content.etag)
+                .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid.as_deref(), Some("daily-series@example.test"));
+        assert_eq!(events[0].start.as_deref(), Some("2026-02-05T09:00:00"));
+    }
+
+    #[test]
+    fn time_range_query_uses_utc_z_timestamps_from_iso_input() {
+        let start = crate::time_filter::to_ical_utc("2026-01-01T02:00:00+02:00").unwrap();
+        let end = crate::time_filter::to_ical_utc("2026-02-01").unwrap();
+        let query = build_time_range_query("/cal/personal/", &start, &end).unwrap();
+        let prepared = query.prepare_request().unwrap();
+
+        assert!(
+            prepared
+                .body
+                .contains(r#"<C:time-range start="20260101T000000Z" end="20260201T000000Z"/>"#)
+        );
+    }
+
+    #[test]
+    fn time_range_query_rejects_non_utc_timestamps() {
+        let result = build_time_range_query("/cal/personal/", "2026-01-01T00:00:00", "2026-02-01");
+        assert!(matches!(result, Err(Error::Validation(_))));
+    }
 
     #[tokio::test]
     async fn pinned_resolver_never_performs_a_second_hostname_lookup() {
