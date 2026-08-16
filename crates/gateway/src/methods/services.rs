@@ -505,6 +505,7 @@ fn list_agent_workspace_files_recursively(
 }
 
 mod admin;
+mod admin_imports;
 mod agents;
 mod channels;
 #[cfg(feature = "connectors")]
