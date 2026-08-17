@@ -104,6 +104,9 @@ impl GatewayExternalAgentService {
                 "acp".to_string(),
             ]),
             (AgentTransportKind::AcpKimi, "kimi", vec!["acp".to_string()]),
+            (AgentTransportKind::AcpMinimaxCode, "mcode", vec![
+                "acp".to_string(),
+            ]),
             (AgentTransportKind::AcpStakpak, "stakpak", vec![
                 "acp".to_string(),
             ]),
@@ -907,6 +910,10 @@ fn session_key_param(params: &Value) -> Option<String> {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
 }
+
+#[cfg(test)]
+#[path = "external_agents/registry_tests.rs"]
+mod registry_tests;
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
