@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260817.03] - 2026-08-17
+### Fixed
+- [ci] Split external agent tests
+
 ## [20260817.02] - 2026-08-17
 ### Added
 - Make webui rpc timeout configurable (#1130)
