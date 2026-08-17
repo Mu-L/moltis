@@ -538,6 +538,10 @@ test.describe("Session management", () => {
 		const mainItem = page.locator('#sessionList .session-item[data-session-key="main"]');
 		await mainItem.click();
 		await expect.poll(() => page.url(), { timeout: 10_000 }).not.toBe(createdUrl);
+		await expectRpcOk(page, "chat.clear", { sessionKey: "main" });
+		await expect
+			.poll(() => page.evaluate(() => window.__moltis_stores?.sessionStore?.getByKey?.("main")?.messageCount || 0))
+			.toBe(0);
 
 		const deleteBtn = page.getByRole("button", { name: "Delete", exact: true });
 		await expect(deleteBtn).toBeVisible({ timeout: 10_000 });
@@ -863,33 +867,20 @@ test.describe("Session management", () => {
 
 		expect(pageErrors).toEqual([]);
 	});
-	test("session search filters the list", async ({ page }) => {
+	test("session search reports no results and closes when cleared", async ({ page }) => {
 		await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
 		const searchInput = page.locator("#sessionSearch");
 		// searchInput may be hidden until focused or may always be visible
 		if (await searchInput.isVisible()) {
-			// Wait for session list to populate before capturing baseline count
-			await expect(page.locator("#sessionList .session-item").first()).toBeVisible({
-				timeout: 5_000,
-			});
-			const countBefore = await page.locator("#sessionList .session-item").count();
-
 			// Type a string that won't match any session
 			await searchInput.fill("zzz_no_match_zzz");
-			// Allow time for filtering
-			await page.waitForTimeout(300);
+			await expect(page.locator("#searchResults .search-hit-empty")).toHaveText("No results");
 
-			const countAfter = await page.locator("#sessionList .session-item").count();
-			expect(countAfter).toBeLessThanOrEqual(countBefore);
-
-			// Clear search restores list
+			// Clearing search closes the results without changing the sidebar.
 			await searchInput.fill("");
-			await page.waitForTimeout(300);
-
-			const countRestored = await page.locator("#sessionList .session-item").count();
-			expect(countRestored).toBe(countBefore);
+			await expect(page.locator("#searchResults")).toHaveClass(/hidden/);
 		}
 	});
 

@@ -381,60 +381,53 @@ test.describe("Agents settings page", () => {
 
 	test("session header agent selector switches session agent and shows sidebar indicator", async ({ page }) => {
 		const pageErrors = watchPageErrors(page);
-		await navigateAndWait(page, "/settings/agents");
-		await waitForWsConnected(page);
+		let agentCreated = false;
+		try {
+			await navigateAndWait(page, "/settings/agents");
+			await waitForWsConnected(page);
 
-		await page.getByRole("button", { name: "New Agent", exact: true }).click();
-		await expect(page.getByText("Create Agent", { exact: true })).toBeVisible();
-		await page.getByPlaceholder("e.g. writer, coder, researcher").fill("selector-test");
-		await page.getByPlaceholder("Creative Writer").fill("Selector Test Agent");
-		await page.getByRole("button", { name: "Create", exact: true }).click();
-		await expect(page.locator(".backend-card").filter({ hasText: "Selector Test Agent" })).toBeVisible({
-			timeout: 10_000,
-		});
+			await page.getByRole("button", { name: "New Agent", exact: true }).click();
+			await expect(page.getByText("Create Agent", { exact: true })).toBeVisible();
+			await page.getByPlaceholder("e.g. writer, coder, researcher").fill("selector-test");
+			await page.getByPlaceholder("Creative Writer").fill("Selector Test Agent");
+			await page.getByRole("button", { name: "Create", exact: true }).click();
+			await expect(page.locator('.backend-card[data-agent-id="selector-test"]')).toBeVisible({ timeout: 10_000 });
+			agentCreated = true;
 
-		await page.goto("/chats");
-		await expectPageContentMounted(page);
-		await waitForWsConnected(page);
-		await createSession(page);
+			await page.goto("/chats");
+			await expectPageContentMounted(page);
+			await waitForWsConnected(page);
+			await createSession(page);
 
-		const agentCombo = page.locator("#sessionHeaderToolbarMount .model-combo").first();
-		await expect(agentCombo).toBeVisible({ timeout: 10_000 });
-		const agentComboBtn = agentCombo.locator(".model-combo-btn");
-		await expect(agentComboBtn).toBeEnabled({ timeout: 10_000 });
-		await agentComboBtn.click();
-		const agentDropdown = agentCombo.locator(".model-dropdown");
-		await expect(agentDropdown).toBeVisible({ timeout: 10_000 });
-		const selectorOption = agentDropdown.locator(".model-dropdown-item", { hasText: "Selector Test Agent" }).first();
-		await expect(selectorOption).toBeVisible({ timeout: 10_000 });
-		await selectorOption.click();
-		// The controlled Preact select resets value on re-render; wait for
-		// the session store to reflect the agent switch (RPC round-trip)
-		// before asserting the DOM value.
-		await expect
-			.poll(async () => page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSession?.value?.agent_id), {
-				timeout: 15_000,
-			})
-			.toBe("selector-test");
-		// Keep assertions on persisted session state + sidebar UI because
-		// the select can transiently reflect stale data during session refreshes.
-		await expect
-			.poll(async () => {
-				return (
-					(await page
-						.locator("#sessionList .session-item.active")
-						.first()
-						.textContent()
-						.catch(() => "")) || ""
-				);
-			})
-			.toContain("@selector-test");
-
-		await navigateAndWait(page, "/settings/agents");
-		const testCard = page.locator(".backend-card").filter({ hasText: "Selector Test Agent" });
-		await testCard.getByRole("button", { name: "Delete", exact: true }).click();
-		await page.locator(".provider-modal").getByRole("button", { name: "Delete", exact: true }).click();
-		await expect(testCard).toHaveCount(0, { timeout: 10_000 });
+			const agentCombo = page.locator("#sessionHeaderToolbarMount .model-combo").first();
+			await expect(agentCombo).toBeVisible({ timeout: 10_000 });
+			const agentComboBtn = agentCombo.locator(".model-combo-btn");
+			await expect(agentComboBtn).toBeEnabled({ timeout: 10_000 });
+			await agentComboBtn.click();
+			const agentDropdown = agentCombo.locator(".model-dropdown");
+			await expect(agentDropdown).toBeVisible({ timeout: 10_000 });
+			const selectorOption = agentDropdown.locator(".model-dropdown-item", { hasText: "Selector Test Agent" }).first();
+			await expect(selectorOption).toBeVisible({ timeout: 10_000 });
+			await selectorOption.click();
+			await expect
+				.poll(async () => page.evaluate(() => window.__moltis_stores?.sessionStore?.activeSession?.value?.agent_id), {
+					timeout: 15_000,
+				})
+				.toBe("selector-test");
+			await expect
+				.poll(async () => {
+					return (
+						(await page
+							.locator("#sessionList .session-item.active")
+							.first()
+							.textContent()
+							.catch(() => "")) || ""
+					);
+				})
+				.toContain("@selector-test");
+		} finally {
+			if (agentCreated) await deleteAgentByName(page, "Selector Test Agent");
+		}
 
 		expect(pageErrors).toEqual([]);
 	});
@@ -781,7 +774,7 @@ test.describe("Agents settings page", () => {
 		const pageErrors = watchPageErrors(page);
 		await navigateAndWait(page, "/settings/agents");
 
-		const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
+		const mainCard = page.locator('.backend-card[data-agent-id="main"]');
 		await mainCard.getByRole("button", { name: "Edit", exact: true }).click();
 
 		// The edit form should appear (heading begins with "Edit")
@@ -811,7 +804,7 @@ test.describe("Agents settings page", () => {
 			expect(setResponse?.ok).toBe(true);
 
 			await navigateAndWait(page, "/settings/agents");
-			const mainCard = page.locator(".backend-card").filter({ hasText: "Default" });
+			const mainCard = page.locator('.backend-card[data-agent-id="main"]');
 			await expect(mainCard).toContainText("AGENTS.md", { timeout: 10_000 });
 			await expect(mainCard).toContainText("truncated by", { timeout: 10_000 });
 		} finally {

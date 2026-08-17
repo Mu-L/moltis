@@ -452,9 +452,10 @@ export function SessionHeader({
 						showToast((res?.error as { message?: string })?.message || "Failed to switch agent", "error");
 						return;
 					}
-					if (session) {
-						session.agent_id = nextAgentId;
-						session.dataVersion.value++;
+					const currentSession = sessionStore.getByKey(currentKey);
+					if (currentSession) {
+						currentSession.agent_id = nextAgentId;
+						currentSession.dataVersion.value++;
 					}
 					fetchSessions();
 				})
@@ -462,7 +463,7 @@ export function SessionHeader({
 					setSwitchingAgent(false);
 				});
 		},
-		[currentAgentId, currentKey, session, switchingAgent],
+		[currentAgentId, currentKey, switchingAgent],
 	);
 
 	const onNodeChange = useCallback(

@@ -1010,9 +1010,11 @@ test.describe("push settings", () => {
 		requests.length = 0;
 		await page.evaluate(async () => {
 			localStorage.setItem("moltis-push-enabled", "1");
-			const cache = await caches.open("moltis-state");
-			await cache.put("/__moltis__/push-disabled", new Response("1"));
-			await cache.delete("/__moltis__/push-enabled");
+			await navigator.locks.request("moltis-push-state", async () => {
+				const cache = await caches.open("moltis-state");
+				await cache.put("/__moltis__/push-disabled", new Response("1"));
+				await cache.delete("/__moltis__/push-enabled");
+			});
 		});
 
 		await page.reload();
