@@ -886,7 +886,7 @@ test.describe("push settings", () => {
 		await navigateAndWait(page, "/settings/notifications");
 
 		await page.getByRole("button", { name: "Enable push notifications" }).click();
-		await expect(page.getByRole("alert")).toContainText("Server rejected subscription (500)");
+		await expect(page.getByText("Server rejected subscription (500)", { exact: true })).toBeVisible();
 		await expect.poll(() => readPushMarker(page)).toEqual({ revive: true });
 		await page.evaluate(() => window.dispatchEvent(new Event("focus")));
 		await expect
