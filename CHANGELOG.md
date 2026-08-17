@@ -19,6 +19,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260817.01] - 2026-08-17
+### Fixed
+- [ci] Repair release validation failures
+- [ci] Stabilize OAuth and push E2E
+- [web] Eliminate session and PWA test races
+- [ci] Eliminate remaining release races
+
 ## [20260816.01] - 2026-08-16
 ### Added
 - [slack] Acknowledge messages with reactions and add reaction triggers (#1165)
