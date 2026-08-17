@@ -215,64 +215,43 @@ fn parameters_schema() -> Value {
     json!({
         "type": "object",
         "description": "Select one read-only connector operation.",
-        "oneOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation"],
-                "properties": {
-                    "operation": { "const": "list_datasets" }
-                }
+        "additionalProperties": false,
+        "required": ["operation"],
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["list_datasets", "search_items", "get_item"]
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation", "dataset_id"],
-                "properties": {
-                    "operation": { "const": "search_items" },
-                    "dataset_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Dataset identifier returned by list_datasets."
-                    },
-                    "text": {
-                        "type": "string",
-                        "maxLength": MAX_QUERY_CHARS,
-                        "description": "Optional full-text search, at most 512 characters."
-                    },
-                    "limit": {
-                        "type": "integer",
-                        "minimum": 1,
-                        "maximum": MAX_SEARCH_LIMIT,
-                        "default": DEFAULT_SEARCH_LIMIT
-                    },
-                    "offset": {
-                        "type": "integer",
-                        "minimum": 0,
-                        "maximum": MAX_SEARCH_OFFSET,
-                        "default": 0
-                    }
-                }
+            "dataset_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Dataset identifier returned by list_datasets. Required for search_items and get_item."
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation", "dataset_id", "item_id"],
-                "properties": {
-                    "operation": { "const": "get_item" },
-                    "dataset_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Dataset identifier returned by list_datasets."
-                    },
-                    "item_id": {
-                        "type": "string",
-                        "minLength": 1,
-                        "description": "Item identifier returned by search_items."
-                    }
-                }
+            "item_id": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Item identifier returned by search_items. Required for get_item."
+            },
+            "text": {
+                "type": "string",
+                "maxLength": MAX_QUERY_CHARS,
+                "description": "Optional full-text search for search_items, at most 512 characters."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_SEARCH_LIMIT,
+                "default": DEFAULT_SEARCH_LIMIT,
+                "description": "Optional result limit for search_items."
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": MAX_SEARCH_OFFSET,
+                "default": 0,
+                "description": "Optional result offset for search_items."
             }
-        ]
+        }
     })
 }
 
@@ -425,12 +404,18 @@ mod tests {
         assert!(encoded.contains("get_item"));
         assert!(!encoded.contains("sync_dataset"));
         assert!(!encoded.contains("account"));
+        assert!(schema.get("oneOf").is_none());
+        assert_eq!(schema["required"], json!(["operation"]));
         assert_eq!(
-            schema.pointer("/oneOf/1/properties/limit/maximum"),
+            schema["properties"]["operation"]["enum"],
+            json!(["list_datasets", "search_items", "get_item"])
+        );
+        assert_eq!(
+            schema.pointer("/properties/limit/maximum"),
             Some(&json!(MAX_SEARCH_LIMIT))
         );
         assert_eq!(
-            schema.pointer("/oneOf/1/properties/offset/maximum"),
+            schema.pointer("/properties/offset/maximum"),
             Some(&json!(MAX_SEARCH_OFFSET))
         );
         Ok(())
@@ -455,6 +440,19 @@ mod tests {
         assert!(
             serde_json::from_value::<ConnectorsOperation>(json!({
                 "operation": "sync_dataset",
+                "dataset_id": "dataset-1"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ConnectorsOperation>(json!({
+                "operation": "search_items"
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<ConnectorsOperation>(json!({
+                "operation": "get_item",
                 "dataset_id": "dataset-1"
             }))
             .is_err()

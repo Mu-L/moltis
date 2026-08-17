@@ -336,38 +336,45 @@ fn parameters_schema() -> Value {
     json!({
         "type": "object",
         "description": "Select one read-only Gmail connector operation.",
-        "oneOf": [
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation"],
-                "properties": {
-                    "operation": { "const": "list_datasets" }
-                }
+        "additionalProperties": false,
+        "required": ["operation"],
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["list_datasets", "search_messages", "get_message"]
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation", "dataset_id"],
-                "properties": {
-                    "operation": { "const": "search_messages" },
-                    "dataset_id": { "type": "string", "minLength": 1, "maxLength": MAX_ID_CHARS },
-                    "query": { "type": "string", "maxLength": MAX_QUERY_CHARS },
-                    "limit": { "type": "integer", "minimum": 1, "maximum": MAX_LIMIT, "default": DEFAULT_LIMIT },
-                    "offset": { "type": "integer", "minimum": 0, "maximum": MAX_OFFSET, "default": 0 }
-                }
+            "dataset_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_ID_CHARS,
+                "description": "Dataset identifier returned by list_datasets. Required for search_messages and get_message."
             },
-            {
-                "type": "object",
-                "additionalProperties": false,
-                "required": ["operation", "dataset_id", "message_id"],
-                "properties": {
-                    "operation": { "const": "get_message" },
-                    "dataset_id": { "type": "string", "minLength": 1, "maxLength": MAX_ID_CHARS },
-                    "message_id": { "type": "string", "minLength": 1, "maxLength": MAX_ID_CHARS }
-                }
+            "message_id": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": MAX_ID_CHARS,
+                "description": "Message identifier returned by search_messages. Required for get_message."
+            },
+            "query": {
+                "type": "string",
+                "maxLength": MAX_QUERY_CHARS,
+                "description": "Optional query for search_messages."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": MAX_LIMIT,
+                "default": DEFAULT_LIMIT,
+                "description": "Optional result limit for search_messages."
+            },
+            "offset": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": MAX_OFFSET,
+                "default": 0,
+                "description": "Optional result offset for search_messages."
             }
-        ]
+        }
     })
 }
 
@@ -497,12 +504,21 @@ mod tests {
 
     #[test]
     fn schema_exposes_only_read_operations_and_bounds() {
-        let encoded = serde_json::to_string(&parameters_schema()).unwrap();
+        let schema = parameters_schema();
+        let encoded = serde_json::to_string(&schema).unwrap();
         assert!(encoded.contains("list_datasets"));
         assert!(encoded.contains("search_messages"));
         assert!(encoded.contains("get_message"));
         assert!(!encoded.contains("sync"));
         assert!(!encoded.contains("account"));
+        assert!(schema.get("oneOf").is_none());
+        assert_eq!(schema["required"], json!(["operation"]));
+        assert_eq!(
+            schema["properties"]["operation"]["enum"],
+            json!(["list_datasets", "search_messages", "get_message"])
+        );
+        assert_eq!(schema["properties"]["limit"]["maximum"], MAX_LIMIT);
+        assert_eq!(schema["properties"]["offset"]["maximum"], MAX_OFFSET);
         assert!(validate_limit(Some(MAX_LIMIT + 1)).is_err());
         assert!(validate_offset(Some(MAX_OFFSET + 1)).is_err());
         assert!(validate_query(Some("x".repeat(MAX_QUERY_CHARS + 1))).is_err());
