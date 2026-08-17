@@ -234,6 +234,7 @@ export interface GonData {
 	graphql_enabled: boolean;
 	connectors_enabled: boolean;
 	terminal_enabled: boolean;
+	rpc_timeout_ms: number;
 	git_branch?: string;
 	mem: MemSnapshot;
 	deploy_platform?: string;

@@ -72,6 +72,7 @@ pub(crate) struct GonData {
     graphql_enabled: bool,
     connectors_enabled: bool,
     terminal_enabled: bool,
+    rpc_timeout_ms: u64,
     git_branch: Option<String>,
     mem: MemSnapshot,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -564,6 +565,7 @@ pub(crate) async fn build_gon_data(gw: &GatewayState) -> GonData {
         graphql_enabled: cfg!(feature = "graphql"),
         connectors_enabled: cfg!(feature = "connectors"),
         terminal_enabled: gw.config.server.is_terminal_enabled(),
+        rpc_timeout_ms: gw.config.server.rpc_timeout_ms,
         git_branch: tokio::task::spawn_blocking(detect_git_branch)
             .await
             .ok()
