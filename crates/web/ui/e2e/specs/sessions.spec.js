@@ -80,13 +80,18 @@ test.describe("Session management", () => {
 	});
 
 	test("session list distinguishes date buckets and refreshes after midnight", async ({ page }) => {
+		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
+		const initialSessionsResponse = page.waitForResponse(
+			(response) => response.request().method() === "GET" && /\/api\/sessions(?:\?|$)/.test(response.url()),
+		);
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await initialSessionsResponse;
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
+
 		// This test injects sessions straight into the client store to control
-		// their timestamps. A background /api/sessions refresh replaces the list
-		// with the server's page wholesale (mergeSessionListPage with
-		// append=false), so any refresh landing mid-assertion drops them — and
-		// the server page is capped at 40 by recency, so once earlier specs have
-		// created enough sessions the injected ones cannot come back. Serving an
-		// empty page keeps the refresh from clobbering the fixtures.
+		// their timestamps. Once the initial server page has materialized main,
+		// keep later refreshes from replacing those fixtures wholesale.
 		await page.route("**/api/sessions?**", (route) =>
 			route.fulfill({
 				status: 200,
@@ -94,11 +99,6 @@ test.describe("Session management", () => {
 				body: JSON.stringify({ sessions: [], next_cursor: null }),
 			}),
 		);
-
-		await page.clock.install({ time: new Date(2026, 6, 23, 23, 58) });
-		const pageErrors = await navigateAndWait(page, "/");
-		await waitForWsConnected(page);
-		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
 		await page.clock.pauseAt(new Date(2026, 6, 23, 23, 59, 59, 500));
 
 		const expected = await page.evaluate(() => {
