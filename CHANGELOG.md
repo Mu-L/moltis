@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260817.05] - 2026-08-17
+### Fixed
+- [web] Stabilize stateful E2E flows
+- [ci] Run release E2E through the sharded CI runner
+
 ## [20260817.04] - 2026-08-17
 ### Fixed
 - Unblock provider release checks
