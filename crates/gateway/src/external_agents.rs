@@ -1924,8 +1924,7 @@ mod tests {
     #[test]
     fn selected_external_agent_filters_by_kind() {
         let id = external_agent_model_id("claude-code", Some("opus"), None);
-        let sel =
-            selected_external_agent(Some(&id), AgentTransportKind::ClaudeCode).unwrap();
+        let sel = selected_external_agent(Some(&id), AgentTransportKind::ClaudeCode).unwrap();
         assert_eq!(sel.model.as_deref(), Some("opus"));
 
         assert!(selected_external_agent(Some(&id), AgentTransportKind::Codex).is_none());
