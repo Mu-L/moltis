@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260817.02] - 2026-08-17
+### Added
+- Make webui rpc timeout configurable (#1130)
+- Add MiniMax Code ACP agent (#1204)
+
+
+### Fixed
+- [browser] Pierce shadow DOM lookups efficiently (#1103)
+- [ci] Stage zvec runtime for OpenAI E2E
+
 ## [20260817.01] - 2026-08-17
 ### Fixed
 - [ci] Repair release validation failures
