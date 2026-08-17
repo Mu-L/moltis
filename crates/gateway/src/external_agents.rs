@@ -22,7 +22,7 @@ use {
     moltis_sessions::{MessageContent, PersistedMessage},
     serde_json::Value,
     tokio::sync::Mutex,
-    tracing::warn,
+    tracing::{info, warn},
 };
 
 #[cfg(test)]
@@ -162,14 +162,14 @@ impl GatewayExternalAgentService {
                 return Ok(Arc::clone(&entry.session));
             }
         }
-        let spec = self.spec_for_kind(kind)?;
+        let entry = self.session_metadata.get(session_key).await;
+        let selected = entry
+            .as_ref()
+            .and_then(|entry| selected_external_agent(entry.model.as_deref(), kind));
+        let spec = self.spec_for_kind(kind, selected)?;
         let mut spec = spec;
         spec.session_key = Some(session_key.to_string());
-        spec.external_session_id = self
-            .session_metadata
-            .get(session_key)
-            .await
-            .and_then(|entry| entry.external_session_id);
+        spec.external_session_id = entry.and_then(|entry| entry.external_session_id);
         let session = Arc::new(Mutex::new(self.registry.start_session(&spec).await?));
         live_sessions.insert(key, LiveSessionEntry {
             session: Arc::clone(&session),
@@ -219,11 +219,19 @@ impl GatewayExternalAgentService {
         }
     }
 
-    fn spec_for_kind(&self, kind: AgentTransportKind) -> anyhow::Result<ExternalAgentSpec> {
+    fn spec_for_kind(
+        &self,
+        kind: AgentTransportKind,
+        selected: Option<SelectedExternalAgent>,
+    ) -> anyhow::Result<ExternalAgentSpec> {
         if !self.config.enabled {
             anyhow::bail!("external agents are disabled")
         }
         let mut spec = ExternalAgentSpec::new(kind);
+        if let Some(selected) = selected {
+            spec.model = selected.model;
+            spec.effort = selected.effort;
+        }
         if let Some(agent_config) = self.config.agents.get(kind.as_str()) {
             spec.binary = agent_config.binary.clone();
             if let Some(args) = &agent_config.args {
@@ -342,8 +350,30 @@ impl ExternalAgentService for GatewayExternalAgentService {
         if !self.config.enabled {
             return Ok(serde_json::json!([]));
         }
-        Ok(serde_json::to_value(self.registry.list_agents().await)
-            .unwrap_or_else(|_| serde_json::json!([])))
+        let mut agents = serde_json::to_value(self.registry.list_agents().await)
+            .unwrap_or_else(|_| serde_json::json!([]));
+        if let Some(agents) = agents.as_array_mut() {
+            for agent in agents {
+                let Some(kind) = agent.get("kind").and_then(Value::as_str) else {
+                    continue;
+                };
+                let models = self
+                    .config
+                    .agents
+                    .get(kind)
+                    .map(|config| config.models.clone())
+                    .unwrap_or_default();
+                let efforts = self
+                    .config
+                    .agents
+                    .get(kind)
+                    .map(|config| config.efforts.clone())
+                    .unwrap_or_default();
+                agent["models"] = serde_json::json!(models);
+                agent["efforts"] = serde_json::json!(efforts);
+            }
+        }
+        Ok(agents)
     }
 
     async fn bind(&self, params: Value) -> ServiceResult {
@@ -361,6 +391,16 @@ impl ExternalAgentService for GatewayExternalAgentService {
             .ok_or_else(|| "missing kind".to_string())?
             .parse::<AgentTransportKind>()
             .map_err(|error| error.to_string())?;
+        let model = params
+            .get("model")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned);
+        let effort = params
+            .get("effort")
+            .and_then(|value| value.as_str())
+            .filter(|value| !value.trim().is_empty())
+            .map(ToOwned::to_owned);
         if !self.registry.has_kind(kind) {
             return Err(format!("external agent kind is not registered: {kind}").into());
         }
@@ -369,7 +409,19 @@ impl ExternalAgentService for GatewayExternalAgentService {
         self.session_metadata
             .set_external_agent(session_key, Some(kind), None)
             .await;
-        Ok(serde_json::json!({ "ok": true, "sessionKey": session_key, "kind": kind.as_str() }))
+        let selected_model_id =
+            external_agent_model_id(kind.as_str(), model.as_deref(), effort.as_deref());
+        self.session_metadata
+            .set_model(session_key, Some(selected_model_id.clone()))
+            .await;
+        Ok(serde_json::json!({
+            "ok": true,
+            "sessionKey": session_key,
+            "kind": kind.as_str(),
+            "model": model,
+            "effort": effort,
+            "modelId": selected_model_id,
+        }))
     }
 
     async fn unbind(&self, params: Value) -> ServiceResult {
@@ -397,9 +449,75 @@ impl ExternalAgentService for GatewayExternalAgentService {
             "bound": kind.is_some(),
             "sessionKey": session_key,
             "kind": kind.map(|kind| kind.as_str()),
+            "model": entry.as_ref().and_then(|entry| {
+                let kind = entry.external_agent_kind?;
+                selected_external_agent(entry.model.as_deref(), kind).and_then(|selected| selected.model)
+            }),
+            "effort": entry.as_ref().and_then(|entry| {
+                let kind = entry.external_agent_kind?;
+                selected_external_agent(entry.model.as_deref(), kind).and_then(|selected| selected.effort)
+            }),
             "externalSessionId": entry.and_then(|entry| entry.external_session_id),
         }))
     }
+}
+
+pub(crate) const EXTERNAL_AGENT_MODEL_PREFIX: &str = "external-agent::";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SelectedExternalAgent {
+    model: Option<String>,
+    effort: Option<String>,
+}
+
+pub(crate) fn external_agent_model_id(
+    kind: &str,
+    model: Option<&str>,
+    effort: Option<&str>,
+) -> String {
+    match (model, effort) {
+        (Some(model), Some(effort)) => {
+            format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}::{effort}")
+        },
+        (Some(model), None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::{model}"),
+        (None, Some(effort)) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}::default::{effort}"),
+        (None, None) => format!("{EXTERNAL_AGENT_MODEL_PREFIX}{kind}"),
+    }
+}
+
+pub(crate) struct ExternalAgentModelSelection<'a> {
+    pub kind: &'a str,
+    pub model: Option<&'a str>,
+    pub effort: Option<&'a str>,
+}
+
+pub(crate) fn parse_external_agent_model_id(
+    model_id: &str,
+) -> Option<ExternalAgentModelSelection<'_>> {
+    let suffix = model_id.strip_prefix(EXTERNAL_AGENT_MODEL_PREFIX)?;
+    let mut parts = suffix.split("::");
+    let kind = parts.next()?;
+    let model = parts.next();
+    let effort = parts.next();
+    Some(ExternalAgentModelSelection {
+        kind,
+        model: model.filter(|m| *m != "default"),
+        effort,
+    })
+}
+
+fn selected_external_agent(
+    selection_id: Option<&str>,
+    kind: AgentTransportKind,
+) -> Option<SelectedExternalAgent> {
+    let sel = parse_external_agent_model_id(selection_id?)?;
+    if sel.kind != kind.as_str() {
+        return None;
+    }
+    Some(SelectedExternalAgent {
+        model: sel.model.map(ToOwned::to_owned),
+        effort: sel.effort.map(ToOwned::to_owned),
+    })
 }
 
 pub struct ExternalAgentChatService {
@@ -479,6 +597,22 @@ impl ExternalAgentChatService {
             .and_then(|value| value.as_str())
             .ok_or_else(|| "external agents currently require text input".to_string())?
             .to_string();
+        let channel_reply_target = params
+            .get("_channel_reply_target")
+            .cloned()
+            .and_then(|value| {
+                match serde_json::from_value::<moltis_channels::ChannelReplyTarget>(value) {
+                    Ok(target) => Some(target),
+                    Err(error) => {
+                        warn!(
+                            session = %session_key,
+                            %error,
+                            "ignoring invalid external-agent channel reply target"
+                        );
+                        None
+                    },
+                }
+            });
         let seq = params.get("_seq").and_then(|value| value.as_u64());
         let run_id = uuid::Uuid::new_v4().to_string();
         let created_at = now_ms();
@@ -504,6 +638,18 @@ impl ExternalAgentChatService {
         self.session_metadata
             .touch(&session_key, history.len() as u32)
             .await;
+        let selected = self
+            .session_metadata
+            .get(&session_key)
+            .await
+            .and_then(|entry| selected_external_agent(entry.model.as_deref(), kind));
+        let selected_model = selected
+            .as_ref()
+            .and_then(|selected| selected.model.as_deref());
+        let selected_effort = selected
+            .as_ref()
+            .and_then(|selected| selected.effort.as_deref());
+        let message_model = selected_model.unwrap_or_else(|| kind.as_str());
 
         crate::broadcast::broadcast(
             &self.state,
@@ -512,7 +658,7 @@ impl ExternalAgentChatService {
                 "runId": run_id,
                 "sessionKey": session_key,
                 "state": "running",
-                "model": kind.as_str(),
+                "model": message_model,
                 "provider": "external-agent",
                 "seq": seq,
             }),
@@ -528,6 +674,16 @@ impl ExternalAgentChatService {
         .await;
         let context = context_from_history_with_project_context(&history, context_command_output);
         let start = std::time::Instant::now();
+        info!(
+            session = %session_key,
+            kind = kind.as_str(),
+            model = message_model,
+            effort = selected_effort.unwrap_or("default"),
+            run_id,
+            text_len = text.len(),
+            channel_reply = channel_reply_target.is_some(),
+            "external-agent turn starting"
+        );
         let live_session = self
             .external_agents
             .session_for_binding(&session_key, kind)
@@ -616,7 +772,7 @@ impl ExternalAgentChatService {
         let assistant_msg = PersistedMessage::Assistant {
             content: assistant_text.clone(),
             created_at: Some(now_ms()),
-            model: Some(kind.as_str().to_string()),
+            model: Some(message_model.to_string()),
             provider: Some("external-agent".to_string()),
             input_tokens: token_usage.as_ref().map(|usage| usage.input_tokens),
             output_tokens: token_usage.as_ref().map(|usage| usage.output_tokens),
@@ -650,7 +806,7 @@ impl ExternalAgentChatService {
                 "sessionKey": session_key,
                 "state": "final",
                 "text": assistant_text,
-                "model": kind.as_str(),
+                "model": message_model,
                 "provider": "external-agent",
                 "inputTokens": token_usage.as_ref().map(|usage| usage.input_tokens).unwrap_or(0),
                 "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
@@ -662,6 +818,23 @@ impl ExternalAgentChatService {
             BroadcastOpts::default(),
         )
         .await;
+        deliver_external_agent_channel_reply(
+            &self.state,
+            channel_reply_target,
+            &assistant_text,
+            &session_key,
+        )
+        .await;
+        info!(
+            session = %session_key,
+            kind = kind.as_str(),
+            model = message_model,
+            effort = selected_effort.unwrap_or("default"),
+            run_id,
+            text_len = assistant_text.len(),
+            duration_ms,
+            "external-agent turn completed"
+        );
         Ok(serde_json::json!({
             "ok": true,
             "runId": run_id,
@@ -670,6 +843,49 @@ impl ExternalAgentChatService {
             "outputTokens": token_usage.as_ref().map(|usage| usage.output_tokens).unwrap_or(0),
             "durationMs": duration_ms,
         }))
+    }
+}
+
+async fn deliver_external_agent_channel_reply(
+    state: &GatewayState,
+    target: Option<moltis_channels::ChannelReplyTarget>,
+    text: &str,
+    session_key: &str,
+) {
+    let Some(target) = target else {
+        return;
+    };
+    if text.trim().is_empty() {
+        info!(
+            session_key,
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            "external-agent channel reply skipped: empty response text"
+        );
+        return;
+    }
+    let Some(outbound) = state.services.channel_outbound_arc() else {
+        warn!(
+            session_key,
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            "external-agent channel reply skipped: outbound unavailable"
+        );
+        return;
+    };
+    let to = target.outbound_to().into_owned();
+    if let Err(error) = outbound
+        .send_text(&target.account_id, &to, text, target.message_id.as_deref())
+        .await
+    {
+        warn!(
+            session_key,
+            account_id = target.account_id,
+            chat_id = target.chat_id,
+            thread_id = target.thread_id.as_deref().unwrap_or("-"),
+            %error,
+            "external-agent channel reply failed"
+        );
     }
 }
 
@@ -939,6 +1155,8 @@ mod tests {
     struct FakeAgentState {
         starts: std::sync::atomic::AtomicUsize,
         prompts: std::sync::Mutex<Vec<String>>,
+        models: std::sync::Mutex<Vec<Option<String>>>,
+        efforts: std::sync::Mutex<Vec<Option<String>>>,
         shutdowns: std::sync::atomic::AtomicUsize,
     }
 
@@ -962,9 +1180,19 @@ mod tests {
 
         async fn start_session(
             &self,
-            _spec: &ExternalAgentSpec,
+            spec: &ExternalAgentSpec,
         ) -> anyhow::Result<Box<dyn ExternalAgentSession>> {
             let start_index = self.state.starts.fetch_add(1, Ordering::SeqCst) + 1;
+            self.state
+                .models
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(spec.model.clone());
+            self.state
+                .efforts
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .push(spec.effort.clone());
             Ok(Box::new(FakeSession {
                 state: Arc::clone(&self.state),
                 external_session_id: format!("fake-session-{start_index}"),
@@ -1091,13 +1319,17 @@ mod tests {
     }
 
     fn test_gateway_state() -> Arc<GatewayState> {
+        test_gateway_state_with_services(GatewayServices::noop())
+    }
+
+    fn test_gateway_state_with_services(services: GatewayServices) -> Arc<GatewayState> {
         GatewayState::new(
             ResolvedAuth {
                 mode: AuthMode::Token,
                 token: None,
                 password: None,
             },
-            GatewayServices::noop(),
+            services,
         )
     }
 
@@ -1115,6 +1347,55 @@ mod tests {
         )
     }
 
+    #[derive(Default)]
+    struct RecordingOutbound {
+        messages: Mutex<Vec<(String, String, String, Option<String>)>>,
+    }
+
+    #[async_trait]
+    impl moltis_channels::ChannelOutbound for RecordingOutbound {
+        async fn send_text(
+            &self,
+            account_id: &str,
+            to: &str,
+            text: &str,
+            reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            self.messages.lock().await.push((
+                account_id.to_string(),
+                to.to_string(),
+                text.to_string(),
+                reply_to.map(ToOwned::to_owned),
+            ));
+            Ok(())
+        }
+
+        async fn send_media(
+            &self,
+            _account_id: &str,
+            _to: &str,
+            _payload: &moltis_common::types::ReplyPayload,
+            _reply_to: Option<&str>,
+        ) -> moltis_channels::Result<()> {
+            Ok(())
+        }
+    }
+
+    async fn test_chat_service_with_state(
+        external_agents: Arc<GatewayExternalAgentService>,
+        metadata: Arc<SqliteSessionMetadata>,
+        session_store: Arc<SessionStore>,
+        state: Arc<GatewayState>,
+    ) -> ExternalAgentChatService {
+        ExternalAgentChatService::new(
+            Arc::new(NoopChatService),
+            external_agents,
+            state,
+            session_store,
+            metadata,
+        )
+    }
+
     #[tokio::test]
     async fn bind_unbind_and_status_update_metadata() {
         let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
@@ -1122,10 +1403,21 @@ mod tests {
         let service = fake_external_agents(Arc::clone(&metadata), agent_state);
 
         let bound = service
-            .bind(serde_json::json!({ "sessionKey": "main", "kind": "codex" }))
+            .bind(serde_json::json!({
+                "sessionKey": "main",
+                "kind": "codex",
+                "model": "gpt-5.2-codex",
+                "effort": "xhigh",
+            }))
             .await
             .expect("bind external agent");
         assert_eq!(bound["kind"], "codex");
+        assert_eq!(bound["model"], "gpt-5.2-codex");
+        assert_eq!(bound["effort"], "xhigh");
+        assert_eq!(
+            bound["modelId"],
+            "external-agent::codex::gpt-5.2-codex::xhigh"
+        );
 
         let status = service
             .status(serde_json::json!({ "sessionKey": "main" }))
@@ -1133,6 +1425,13 @@ mod tests {
             .expect("status");
         assert_eq!(status["bound"], true);
         assert_eq!(status["kind"], "codex");
+        assert_eq!(status["model"], "gpt-5.2-codex");
+        assert_eq!(status["effort"], "xhigh");
+        let entry = metadata.get("main").await.expect("session entry");
+        assert_eq!(
+            entry.model.as_deref(),
+            Some("external-agent::codex::gpt-5.2-codex::xhigh")
+        );
 
         service
             .unbind(serde_json::json!({ "sessionKey": "main" }))
@@ -1144,6 +1443,47 @@ mod tests {
             .expect("status after unbind");
         assert_eq!(status["bound"], false);
         assert!(status["kind"].is_null());
+    }
+
+    #[tokio::test]
+    async fn selected_external_agent_model_is_passed_to_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+        external_agents
+            .bind(serde_json::json!({
+                "sessionKey": "main",
+                "kind": "codex",
+                "model": "gpt-5.2-codex",
+                "effort": "xhigh",
+            }))
+            .await
+            .expect("bind external agent");
+        let chat = test_chat_service(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+        )
+        .await;
+
+        chat.send(serde_json::json!({ "sessionKey": "main", "text": "hello" }))
+            .await
+            .expect("send external prompt");
+
+        let models = agent_state
+            .models
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        let efforts = agent_state
+            .efforts
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone();
+        assert_eq!(models, vec![Some("gpt-5.2-codex".to_string())]);
+        assert_eq!(efforts, vec![Some("xhigh".to_string())]);
     }
 
     #[tokio::test]
@@ -1302,6 +1642,51 @@ mod tests {
                 .and_then(|entry| entry.external_session_id),
             Some("fake-session-1".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn bound_chat_send_delivers_external_reply_to_channel_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let session_store = Arc::new(SessionStore::new(dir.path().to_path_buf()));
+        let metadata = Arc::new(SqliteSessionMetadata::new(sqlite_pool().await));
+        let agent_state = Arc::new(FakeAgentState::default());
+        let external_agents = fake_external_agents(Arc::clone(&metadata), Arc::clone(&agent_state));
+        external_agents
+            .bind(serde_json::json!({ "sessionKey": "telegram:bot:123", "kind": "codex" }))
+            .await
+            .expect("bind external agent");
+        let outbound = Arc::new(RecordingOutbound::default());
+        let state = test_gateway_state_with_services(
+            GatewayServices::noop().with_channel_outbound(outbound.clone()),
+        );
+        let chat = test_chat_service_with_state(
+            Arc::clone(&external_agents),
+            Arc::clone(&metadata),
+            Arc::clone(&session_store),
+            state,
+        )
+        .await;
+
+        chat.send(serde_json::json!({
+            "sessionKey": "telegram:bot:123",
+            "text": "hello",
+            "_channel_reply_target": {
+                "channel_type": "telegram",
+                "account_id": "bot",
+                "chat_id": "123",
+                "message_id": "456",
+                "thread_id": null,
+            },
+        }))
+        .await
+        .expect("send external agent turn");
+
+        assert_eq!(*outbound.messages.lock().await, vec![(
+            "bot".to_string(),
+            "123".to_string(),
+            "reply to hello".to_string(),
+            Some("456".to_string()),
+        )]);
     }
 
     #[tokio::test]
@@ -1491,5 +1876,58 @@ mod tests {
 
         assert_eq!(agent_state.shutdowns.load(Ordering::SeqCst), 1);
         assert!(external_agents.live_sessions.lock().await.is_empty());
+    }
+
+    #[test]
+    fn model_id_round_trips_through_parse() {
+        let id = external_agent_model_id("claude-code", Some("opus"), Some("high"));
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "claude-code");
+        assert_eq!(parsed.model, Some("opus"));
+        assert_eq!(parsed.effort, Some("high"));
+    }
+
+    #[test]
+    fn model_id_kind_only() {
+        let id = external_agent_model_id("codex", None, None);
+        assert_eq!(id, "external-agent::codex");
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "codex");
+        assert!(parsed.model.is_none());
+        assert!(parsed.effort.is_none());
+    }
+
+    #[test]
+    fn model_id_with_model_only() {
+        let id = external_agent_model_id("claude-code", Some("sonnet"), None);
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "claude-code");
+        assert_eq!(parsed.model, Some("sonnet"));
+        assert!(parsed.effort.is_none());
+    }
+
+    #[test]
+    fn model_id_effort_only_uses_default_placeholder() {
+        let id = external_agent_model_id("codex", None, Some("low"));
+        assert!(id.contains("::default::"));
+        let parsed = parse_external_agent_model_id(&id).unwrap();
+        assert_eq!(parsed.kind, "codex");
+        assert!(parsed.model.is_none());
+        assert_eq!(parsed.effort, Some("low"));
+    }
+
+    #[test]
+    fn parse_rejects_non_external_agent_prefix() {
+        assert!(parse_external_agent_model_id("openai::gpt-4").is_none());
+    }
+
+    #[test]
+    fn selected_external_agent_filters_by_kind() {
+        let id = external_agent_model_id("claude-code", Some("opus"), None);
+        let sel =
+            selected_external_agent(Some(&id), AgentTransportKind::ClaudeCode).unwrap();
+        assert_eq!(sel.model.as_deref(), Some("opus"));
+
+        assert!(selected_external_agent(Some(&id), AgentTransportKind::Codex).is_none());
     }
 }
