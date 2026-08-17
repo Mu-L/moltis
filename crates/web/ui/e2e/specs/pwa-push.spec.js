@@ -3,6 +3,9 @@ const { navigateAndWait, watchPageErrors } = require("../helpers");
 
 async function getActiveWorker(page, context) {
 	await navigateAndWait(page, "/chats");
+	await page.evaluate(async () => {
+		await navigator.serviceWorker.ready;
+	});
 	await expect.poll(() => context.serviceWorkers().length).toBeGreaterThan(0);
 	return context.serviceWorkers()[0];
 }

@@ -566,6 +566,59 @@ test.describe("Session management", () => {
 		expect(pageErrors).toEqual([]);
 	});
 
+	test("stale session list does not erase a concurrently created session", async ({ page }) => {
+		const pageErrors = await navigateAndWait(page, "/");
+		await waitForWsConnected(page);
+		await expect(page.locator('#sessionList .session-item[data-session-key="main"]')).toBeVisible();
+
+		let releaseStaleResponse = () => {
+			// Replaced synchronously by the Promise executor below.
+		};
+		const staleResponseReleased = new Promise((resolve) => {
+			releaseStaleResponse = resolve;
+		});
+		let staleResponseHeld = false;
+		let sessionListRequestCount = 0;
+		await page.route("**/api/sessions?**", async (route) => {
+			const response = await route.fetch();
+			const json = await response.json();
+			sessionListRequestCount += 1;
+			if (!staleResponseHeld) {
+				staleResponseHeld = true;
+				await staleResponseReleased;
+			}
+			await route.fulfill({ response, json });
+		});
+
+		await page.evaluate(() => {
+			const fetchSessions = window.__moltis_modules?.sessions?.fetchSessions;
+			if (typeof fetchSessions !== "function") throw new Error("fetchSessions unavailable");
+			fetchSessions();
+		});
+		await expect.poll(() => staleResponseHeld).toBe(true);
+
+		const sessionKey = `e2e-stale-list-${Date.now()}`;
+		await expectRpcOk(page, "sessions.switch", { key: sessionKey });
+		await page.evaluate((key) => {
+			const store = window.__moltis_stores?.sessionStore;
+			if (!store) throw new Error("session store unavailable");
+			const originalSetAll = store.setAll;
+			window.__staleListRemovedSession = false;
+			store.setAll = (sessions) => {
+				originalSetAll(sessions);
+				if (!store.getByKey(key)) window.__staleListRemovedSession = true;
+			};
+			store.upsert({ key, label: "Concurrent session" });
+		}, sessionKey);
+
+		releaseStaleResponse();
+		await expect.poll(() => sessionListRequestCount).toBeGreaterThan(1);
+		await expect.poll(() => page.evaluate(() => window.__staleListRemovedSession)).toBe(false);
+		await expect(page.locator(`#sessionList .session-item[data-session-key="${sessionKey}"]`)).toBeVisible();
+
+		expect(pageErrors).toEqual([]);
+	});
+
 	test("cron tab hides archived sessions until the shared archive toggle is enabled", async ({ page }) => {
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
