@@ -18,13 +18,12 @@ use {
 };
 
 const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
-const TEST_MODEL: &str = "accounts/fireworks/models/glm-5p1";
+const TEST_MODEL: &str = "accounts/fireworks/models/gpt-oss-120b";
 
 /// Known Fireworks models we catalog. Keep in sync with `FIREWORKS_MODELS` in
 /// `crates/providers/src/model_catalogs.rs`.
 const KNOWN_MODELS: &[&str] = &[
     "accounts/fireworks/models/kimi-k2p6",
-    "accounts/fireworks/models/glm-5p1",
     "accounts/fireworks/models/gpt-oss-120b",
     "accounts/fireworks/models/deepseek-v4-pro",
 ];
@@ -337,8 +336,8 @@ async fn catalog_models_are_live() {
     eprintln!("=====================================\n");
 
     assert!(
-        alive.contains(&TEST_MODEL),
-        "{TEST_MODEL} should be reachable"
+        dead.is_empty(),
+        "catalog contains unreachable models: {dead:?}"
     );
 }
 
