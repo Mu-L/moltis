@@ -620,20 +620,31 @@ test.describe("Session management", () => {
 	});
 
 	test("cron tab hides archived sessions until the shared archive toggle is enabled", async ({ page }) => {
+		const suffix = Date.now();
+		const keys = {
+			activeKey: `cron:e2e-archive-filter-active-${suffix}`,
+			archivedKey: `cron:e2e-archive-filter-archived-${suffix}`,
+		};
+		await page.route("**/api/sessions?**", (route) =>
+			route.fulfill({
+				json: {
+					sessions: [
+						{ key: keys.activeKey, label: "Active cron run", archived: false },
+						{ key: keys.archivedKey, label: "Archived cron run", archived: true },
+					],
+					hasMore: false,
+					nextCursor: null,
+					total: 2,
+				},
+			}),
+		);
 		const pageErrors = await navigateAndWait(page, "/");
 		await waitForWsConnected(page);
 
-		const keys = await page.evaluate(() => {
+		await page.evaluate(() => {
 			const store = window.__moltis_stores?.sessionStore;
 			if (!store) throw new Error("session store unavailable");
-
-			const suffix = Date.now();
-			const activeKey = `cron:e2e-archive-filter-active-${suffix}`;
-			const archivedKey = `cron:e2e-archive-filter-archived-${suffix}`;
 			store.setShowArchivedSessions(false);
-			store.upsert({ key: activeKey, label: "Active cron run", archived: false });
-			store.upsert({ key: archivedKey, label: "Archived cron run", archived: true });
-			return { activeKey, archivedKey };
 		});
 
 		await page.locator('#sessionTabBar .session-tab[data-tab="cron"]').click();
