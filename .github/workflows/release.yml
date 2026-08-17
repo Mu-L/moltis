@@ -336,7 +336,10 @@ jobs:
         env:
           CI: "true"
           MOLTIS_BINARY: ${{ github.workspace }}/target/e2e-bin/moltis
-        run: npx playwright test
+        # Must stay identical to the CI workflow's E2E command: run-ci.sh shards
+        # the default project and gives every project its own gateway, which is
+        # the only configuration the suite is validated against.
+        run: ./e2e/run-ci.sh
 
       - name: Upload test results
         if: ${{ !cancelled() && env.RELEASE_DRY_RUN != 'true' }}
