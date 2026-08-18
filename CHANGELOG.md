@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260818.01] - 2026-08-18
+### Fixed
+- [ci] Stabilize release validation races
+
 ## [20260817.05] - 2026-08-17
 ### Fixed
 - [web] Stabilize stateful E2E flows
