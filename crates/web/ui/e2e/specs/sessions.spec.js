@@ -92,7 +92,7 @@ test.describe("Session management", () => {
 		// This test injects sessions straight into the client store to control
 		// their timestamps. Once the initial server page has materialized main,
 		// keep later refreshes from replacing those fixtures wholesale.
-		await page.route("**/api/sessions?**", (route) =>
+		await page.route(/\/api\/sessions(?:\?|$)/, (route) =>
 			route.fulfill({
 				status: 200,
 				contentType: "application/json",
