@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260818.07] - 2026-08-18
+### Removed
+- Remove broken star history chart
+
+
+### Fixed
+- [ci] Run clippy and tests in parallel
+- [gateway] Treat heartbeat.update params as a patch, not a whole config (#1209)
+
 ## [20260818.06] - 2026-08-18
 ### Fixed
 - [release] Keep standalone packages self-contained
