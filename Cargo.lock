@@ -7261,6 +7261,7 @@ dependencies = [
  "reqwest 0.13.2",
  "secrecy 0.8.0",
  "serde_json",
+ "serial_test",
  "sqlx",
  "tempfile",
  "tikv-jemallocator",

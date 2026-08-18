@@ -67,6 +67,10 @@ watching pipeline as the built-in backend.
 
 **Setup:**
 
+The Docker image and default source build include zvec. Standalone release
+packages use the self-contained `portable` feature set and currently omit zvec
+because its native runtime is not available for every supported target.
+
 1. Build moltis with the `zvec` feature flag:
    ```bash
    cargo build --release --features zvec
