@@ -230,7 +230,11 @@ jobs:
           persist-credentials: false
       - name: Install runtime dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o APT::Update::Error-Mode=any
           sudo apt-get install -y podman uidmap slirp4netns fuse-overlayfs
       - name: Verify runtimes
         run: |
@@ -264,7 +268,11 @@ jobs:
           persist-credentials: false
       - name: Install build dependencies
         run: |
-          sudo apt-get update
+          sudo apt-get update \
+            -o Acquire::Retries=5 \
+            -o Acquire::http::Timeout=30 \
+            -o Acquire::https::Timeout=30 \
+            -o APT::Update::Error-Mode=any
           sudo apt-get install -y cmake build-essential clang libclang-dev pkg-config
       - uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561 # master
         with:

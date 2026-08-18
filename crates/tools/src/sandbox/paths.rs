@@ -134,6 +134,7 @@ pub(crate) fn ensure_managed_files_host_dir(
     Ok(host_visible_managed_files_dir(config, cli))
 }
 
+#[cfg(target_os = "macos")]
 pub(crate) fn ensure_managed_files_none_mask_host_dir(
     config: &SandboxConfig,
     cli: Option<&str>,
