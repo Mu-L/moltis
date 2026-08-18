@@ -63,6 +63,110 @@ backend = "podman"
 }
 
 #[test]
+fn podman_escape_hatch_fields_accepted_and_warned() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.category != "unknown-field"),
+        "podman escape hatch fields should be accepted"
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.path == "tools.exec.sandbox.allow_nested_podman")
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Severity::Error)
+    );
+}
+
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn host_podman_escape_hatch_rejected_off_linux() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(result.diagnostics.iter().any(|d| {
+        d.severity == Severity::Error && d.path == "tools.exec.sandbox.allow_host_podman"
+    }));
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn host_podman_escape_hatch_accepted_on_linux() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .all(|d| d.severity != Severity::Error)
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.path == "tools.exec.sandbox.allow_host_podman")
+    );
+}
+
+#[test]
+fn podman_escape_hatches_require_podman_backend() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "docker"
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| { d.severity == Severity::Error && d.path == "tools.exec.sandbox.backend" })
+    );
+}
+
+#[test]
+fn podman_escape_hatches_are_mutually_exclusive() {
+    let toml = r#"
+[tools.exec.sandbox]
+backend = "podman"
+allow_host_podman = true
+allow_nested_podman = true
+"#;
+    let result = validate_toml_str(toml);
+
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| { d.severity == Severity::Error && d.path == "tools.exec.sandbox" })
+    );
+}
+
+#[test]
 fn managed_files_mount_is_recognized_by_schema_validation() {
     let result = validate_toml_str(
         r#"

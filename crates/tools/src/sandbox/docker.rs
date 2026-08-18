@@ -5,7 +5,9 @@ use {
     sha2::{Digest, Sha256},
     std::{
         collections::{HashMap, HashSet},
+        path::{Path, PathBuf},
         sync::{Arc, OnceLock},
+        time::Duration,
     },
     tokio::sync::{Mutex, Semaphore},
     tracing::{debug, info, warn},
@@ -43,6 +45,10 @@ use {
         },
     },
 };
+
+const SANDBOX_HOST_PODMAN_SOCKET: &str = "/tmp/moltis-host-podman.sock";
+const PODMAN_MODE_LABEL: &str = "org.moltis.podman-mode";
+const PODMAN_SOCKET_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Distinguishes Docker from Podman for behaviour that differs between the two
 /// OCI runtimes (hardening flags, host-gateway resolution, etc.).
@@ -106,6 +112,18 @@ impl DockerSandbox {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn podman_with_cli(config: SandboxConfig, cli: &'static str) -> Self {
+        Self {
+            config,
+            kind: BackendKind::Podman,
+            cli,
+            backend_label: "podman",
+            provisioned: Mutex::new(HashSet::new()),
+            startup_gates: Mutex::new(HashMap::new()),
+        }
+    }
+
     fn image(&self) -> &str {
         self.config
             .image
@@ -164,6 +182,65 @@ impl DockerSandbox {
         String::from_utf8_lossy(&output.stdout).trim() == "true"
     }
 
+    async fn container_podman_mode(&self, name: &str) -> Option<String> {
+        let format = format!(r#"{{{{ index .Config.Labels "{PODMAN_MODE_LABEL}" }}}}"#);
+        let output = tokio::process::Command::new(self.cli)
+            .args(["inspect", "--format", &format, name])
+            .output()
+            .await
+            .ok()?;
+        if !output.status.success() {
+            return None;
+        }
+
+        let mode = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        (!mode.is_empty() && mode != "<no value>").then_some(mode)
+    }
+
+    pub(crate) fn podman_mode_label_value(&self, socket_path: Option<&Path>) -> Result<String> {
+        if self.config.allow_nested_podman {
+            return Ok("nested".to_string());
+        }
+        let Some(path) = socket_path else {
+            return Ok("hardened".to_string());
+        };
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+
+            let metadata = std::fs::metadata(path).map_err(|error| {
+                Error::message(format!(
+                    "failed to identify host Podman socket '{}': {error}",
+                    path.display()
+                ))
+            })?;
+            Ok(format!(
+                "host:{}:{}:{}:{}:{}",
+                path.display(),
+                metadata.dev(),
+                metadata.ino(),
+                metadata.ctime(),
+                metadata.ctime_nsec()
+            ))
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            Err(Error::message(
+                "allow_host_podman is supported only on Unix hosts",
+            ))
+        }
+    }
+
+    pub(crate) fn podman_mode_label_args(mode: &str) -> Vec<String> {
+        vec!["--label".to_string(), format!("{PODMAN_MODE_LABEL}={mode}")]
+    }
+
+    pub(crate) fn podman_mode_matches(actual: Option<&str>, expected: &str) -> bool {
+        actual == Some(expected)
+    }
+
     async fn remove_container_checked(&self, name: &str) -> Result<()> {
         let output = tokio::process::Command::new(self.cli)
             .args(["rm", "-f", name])
@@ -194,6 +271,18 @@ impl DockerSandbox {
                 == self.managed_files_policy_fingerprint()
     }
 
+    async fn container_configuration_matches(&self, name: &str, podman_mode: &str) -> bool {
+        let managed_files_matches = self.managed_files_policy_matches(name);
+        if self.kind != BackendKind::Podman {
+            return managed_files_matches.await;
+        }
+
+        let (managed_files_matches, actual_podman_mode) =
+            tokio::join!(managed_files_matches, self.container_podman_mode(name));
+        managed_files_matches
+            && Self::podman_mode_matches(actual_podman_mode.as_deref(), podman_mode)
+    }
+
     pub(crate) fn managed_files_policy_fingerprint(&self) -> String {
         let source = host_visible_managed_files_dir(&self.config, Some(self.cli));
         let input = format!(
@@ -205,8 +294,8 @@ impl DockerSandbox {
         format!("{:x}", Sha256::digest(input.as_bytes()))
     }
 
-    fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<std::path::PathBuf> {
-        let guest_path = std::path::Path::new(guest_path);
+    fn mounted_host_path(&self, id: &SandboxId, guest_path: &str) -> Option<PathBuf> {
+        let guest_path = Path::new(guest_path);
         resolve_workspace_guest_path_on_host(&self.config, Some(self.cli), guest_path).or_else(
             || {
                 resolve_home_persistence_guest_path_on_host(
@@ -223,7 +312,7 @@ impl DockerSandbox {
         resolve_managed_files_guest_path_on_host(
             &self.config,
             Some(self.cli),
-            std::path::Path::new(guest_path),
+            Path::new(guest_path),
         )
     }
 
@@ -312,13 +401,25 @@ impl DockerSandbox {
     /// `is_prebuilt` controls whether `--read-only` is applied: prebuilt images
     /// already have packages baked in so the root FS can be read-only, while
     /// non-prebuilt images need a writable root for `apt-get` provisioning.
-    pub(crate) fn hardening_args(is_prebuilt: bool, kind: BackendKind) -> Vec<String> {
-        let mut args = vec![
-            // --- Capability / privilege ---
-            "--cap-drop".to_string(),
-            "ALL".to_string(),
-            "--security-opt".to_string(),
-            "no-new-privileges".to_string(),
+    pub(crate) fn hardening_args(
+        is_prebuilt: bool,
+        kind: BackendKind,
+        allow_nested_podman: bool,
+    ) -> Vec<String> {
+        let mut args = Vec::new();
+        if kind == BackendKind::Podman && allow_nested_podman {
+            args.push("--privileged".to_string());
+        } else {
+            args.extend([
+                // --- Capability / privilege ---
+                "--cap-drop".to_string(),
+                "ALL".to_string(),
+                "--security-opt".to_string(),
+                "no-new-privileges".to_string(),
+            ]);
+        }
+
+        args.extend([
             // --- Writable tmpfs mounts ---
             "--tmpfs".to_string(),
             "/tmp:rw,nosuid,size=256m".to_string(),
@@ -329,7 +430,7 @@ impl DockerSandbox {
             // and the `hostname` command do not reveal the host identity.
             "--hostname".to_string(),
             "sandbox".to_string(),
-        ];
+        ]);
         // Mask /sys subtrees that expose host hardware identifiers
         // (serial numbers, BIOS/UEFI data, disk models, LUKS UUIDs).
         // Empty read-only tmpfs overlays hide the underlying sysfs entries.
@@ -345,10 +446,96 @@ impl DockerSandbox {
                 args.extend(["--tmpfs".to_string(), format!("{path}:ro,nosuid")]);
             }
         }
-        if is_prebuilt {
+        if is_prebuilt && !(kind == BackendKind::Podman && allow_nested_podman) {
             args.push("--read-only".to_string());
         }
         args
+    }
+
+    pub(crate) fn podman_socket_run_args_for_path(
+        socket_path: Option<&Path>,
+    ) -> Result<Vec<String>> {
+        let Some(socket_path) = socket_path else {
+            return Err(Error::message(
+                "allow_host_podman is enabled, but no host Podman socket was found; start the Podman API service (for example, `systemctl --user enable --now podman.socket`) and set CONTAINER_HOST if it uses a nonstandard path",
+            ));
+        };
+
+        let host = format!("unix://{SANDBOX_HOST_PODMAN_SOCKET}");
+        Ok(vec![
+            "-v".to_string(),
+            format!("{}:{SANDBOX_HOST_PODMAN_SOCKET}:rw", socket_path.display()),
+            "--security-opt".to_string(),
+            "label=disable".to_string(),
+            "-e".to_string(),
+            format!("CONTAINER_HOST={host}"),
+            "-e".to_string(),
+            format!("DOCKER_HOST={host}"),
+        ])
+    }
+
+    pub(crate) async fn is_usable_podman_socket(path: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::FileTypeExt as _;
+
+            path.is_absolute()
+                && std::fs::metadata(path).is_ok_and(|metadata| metadata.file_type().is_socket())
+                && matches!(
+                    tokio::time::timeout(
+                        PODMAN_SOCKET_PROBE_TIMEOUT,
+                        tokio::net::UnixStream::connect(path)
+                    )
+                    .await,
+                    Ok(Ok(_))
+                )
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = path;
+            false
+        }
+    }
+
+    async fn host_podman_socket_path() -> Option<PathBuf> {
+        for var in ["CONTAINER_HOST", "PODMAN_HOST"] {
+            if let Ok(host) = std::env::var(var)
+                && let Some(path) = host.strip_prefix("unix://")
+            {
+                let path = PathBuf::from(path);
+                if Self::is_usable_podman_socket(&path).await {
+                    return Some(path);
+                }
+            }
+        }
+
+        if let Ok(runtime_dir) = std::env::var("XDG_RUNTIME_DIR") {
+            let path = PathBuf::from(runtime_dir).join("podman/podman.sock");
+            if Self::is_usable_podman_socket(&path).await {
+                return Some(path);
+            }
+        }
+
+        let path = PathBuf::from("/run/podman/podman.sock");
+        Self::is_usable_podman_socket(&path).await.then_some(path)
+    }
+
+    pub(crate) async fn podman_socket_path(&self) -> Result<Option<PathBuf>> {
+        if self.kind != BackendKind::Podman || !self.config.allow_host_podman {
+            return Ok(None);
+        }
+
+        if cfg!(not(target_os = "linux")) {
+            return Err(Error::message(
+                "allow_host_podman is supported only on Linux hosts",
+            ));
+        }
+
+        let socket_path = Self::host_podman_socket_path().await;
+        if socket_path.is_none() {
+            Self::podman_socket_run_args_for_path(None)?;
+        }
+        Ok(socket_path)
     }
 
     /// Mount the host `moltis-ctl` binary into the sandbox at `/usr/local/bin/moltis-ctl`.
@@ -489,8 +676,8 @@ impl DockerSandbox {
     async fn export_buildkit_image_to_store(
         &self,
         tag: &str,
-        dockerfile_path: &std::path::Path,
-        context_dir: &std::path::Path,
+        dockerfile_path: &Path,
+        context_dir: &Path,
     ) -> Result<()> {
         let tar_path = std::env::temp_dir().join(format!(
             "moltis-sandbox-export-{}.tar",
@@ -562,14 +749,19 @@ impl DockerSandbox {
         image_override: Option<&str>,
     ) -> Result<()> {
         let name = self.container_name(id);
+        let podman_socket_path = self.podman_socket_path().await?;
+        let podman_mode = self.podman_mode_label_value(podman_socket_path.as_deref())?;
 
-        if self.is_container_running(&name).await && self.managed_files_policy_matches(&name).await
-        {
-            debug!(container = %name, "sandbox container already running");
-            return Ok(());
-        }
         if self.is_container_running(&name).await {
-            warn!(container = %name, "recreating sandbox after managed Files mount policy changed");
+            if self
+                .container_configuration_matches(&name, &podman_mode)
+                .await
+            {
+                debug!(container = %name, "sandbox container already running");
+                return Ok(());
+            }
+
+            info!(container = %name, "recreating sandbox after container configuration changed");
             self.remove_container_checked(&name).await?;
             self.provisioned.lock().await.remove(&name);
         }
@@ -601,10 +793,20 @@ impl DockerSandbox {
         }
 
         args.extend(self.resource_args());
-        args.extend(Self::hardening_args(is_prebuilt, self.kind));
+        args.extend(Self::hardening_args(
+            is_prebuilt,
+            self.kind,
+            self.config.allow_nested_podman,
+        ));
         args.extend(self.workspace_args());
         args.extend(self.home_persistence_args(id)?);
         args.extend(self.managed_files_args()?);
+        if self.kind == BackendKind::Podman {
+            args.extend(Self::podman_mode_label_args(&podman_mode));
+        }
+        if let Some(socket_path) = podman_socket_path.as_deref() {
+            args.extend(Self::podman_socket_run_args_for_path(Some(socket_path))?);
+        }
         args.extend(Self::moltis_ctl_mount_args());
 
         args.push(image);
@@ -619,7 +821,9 @@ impl DockerSandbox {
             let stderr = String::from_utf8_lossy(&output.stderr);
             if is_container_name_conflict(&stderr) {
                 if self.is_container_running(&name).await
-                    && self.managed_files_policy_matches(&name).await
+                    && self
+                        .container_configuration_matches(&name, &podman_mode)
+                        .await
                 {
                     debug!(
                         container = %name,
@@ -631,7 +835,7 @@ impl DockerSandbox {
 
                 warn!(
                     container = %name,
-                    "{} run reported a name conflict for a non-running container, recreating",
+                    "{} run reported a name conflict for a stale or incompatible container, recreating",
                     self.cli
                 );
                 self.provisioned.lock().await.remove(&name);
@@ -647,14 +851,14 @@ impl DockerSandbox {
                         "{} run failed after removing stale container '{}': {}",
                         self.cli,
                         name,
-                        retry_stderr.trim()
+                        format_container_run_stderr(self.kind, &retry_stderr)
                     )));
                 }
             } else {
                 return Err(Error::message(format!(
                     "{} run failed: {}",
                     self.cli,
-                    stderr.trim()
+                    format_container_run_stderr(self.kind, &stderr)
                 )));
             }
         }
@@ -1017,6 +1221,22 @@ pub(crate) fn is_container_name_conflict(stderr: &str) -> bool {
             || lower.contains("the name '"))
 }
 
+pub(crate) fn is_podman_rootless_reexec_restricted(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("cannot clone") && lower.contains("cannot re-exec process")
+}
+
+pub(crate) fn format_container_run_stderr(kind: BackendKind, stderr: &str) -> String {
+    let trimmed = stderr.trim();
+    if kind != BackendKind::Podman || !is_podman_rootless_reexec_restricted(trimmed) {
+        return trimmed.to_string();
+    }
+
+    format!(
+        "{trimmed}\n\nRootless Podman cannot start from a process restricted by systemd NoNewPrivileges=true or equivalent namespace/privilege hardening. If Moltis uses the bundled system service, install deploy/moltis-podman.conf as a systemd drop-in; custom units must also provide writable Podman home and runtime directories. Running podman inside an already sandboxed Moltis container requires an explicit escape hatch: allow_host_podman=true for host socket passthrough or allow_nested_podman=true for a privileged nested-Podman sandbox."
+    )
+}
+
 /// No-op sandbox that passes through to direct execution.
 pub struct NoSandbox;
 
@@ -1108,7 +1328,7 @@ pub(crate) fn sysfs_paths_to_mask() -> Vec<&'static str> {
 /// only those that exist under `sysfs_root`.  If `sysfs_root` itself doesn't
 /// exist (macOS), all paths are returned — Docker Desktop's VM will have them.
 pub(crate) fn sysfs_paths_to_mask_from(sysfs_root: &str) -> Vec<&'static str> {
-    let root = std::path::Path::new(sysfs_root);
+    let root = Path::new(sysfs_root);
     if !root.exists() {
         // Non-Linux host (macOS): Docker runs in a VM with full sysfs.
         return SYSFS_MASK_PATHS.to_vec();
