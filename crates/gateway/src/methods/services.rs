@@ -512,6 +512,7 @@ mod channels;
 mod connectors;
 mod core;
 mod feedback;
+mod heartbeat_patch;
 mod instrumentation;
 mod modes;
 mod sessions;
