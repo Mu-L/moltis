@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260818.06] - 2026-08-18
+### Fixed
+- [release] Keep standalone packages self-contained
+
 ## [20260818.05] - 2026-08-18
 ### Fixed
 - [docker] Package zvec runtime in release image
