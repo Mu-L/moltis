@@ -10,6 +10,8 @@ use {
 
 #[cfg(any(target_os = "macos", test))]
 use super::types::APPLE_CONTAINER_SAFE_WORKDIR;
+#[cfg(target_os = "macos")]
+use super::types::ResourceLimits;
 use {
     super::types::{
         GO_TOOL_INSTALLS, GOGCLI_MODULE_PATH, GOGCLI_VERSION, SANDBOX_HOME_DIR,
@@ -119,7 +121,10 @@ pub(crate) fn apple_container_run_args(
     image: &str,
     tz: Option<&str>,
     volumes: &[String],
-) -> Vec<String> {
+    resource_limits: &ResourceLimits,
+) -> Result<Vec<String>> {
+    validate_apple_container_resource_limits(resource_limits)?;
+
     let mut args = vec![
         "run".to_string(),
         "-d".to_string(),
@@ -132,6 +137,15 @@ pub(crate) fn apple_container_run_args(
     if let Some(tz) = tz {
         args.extend(["-e".to_string(), format!("TZ={tz}")]);
     }
+    if let Some(ref memory) = resource_limits.memory_limit {
+        args.extend(["--memory".to_string(), memory.clone()]);
+    }
+    if let Some(cpus) = resource_limits.cpu_quota {
+        args.extend(["--cpus".to_string(), cpus.to_string()]);
+    }
+    if let Some(pids) = resource_limits.pids_max {
+        args.extend(["--ulimit".to_string(), format!("nproc={pids}")]);
+    }
     for volume in volumes {
         args.extend(["--volume".to_string(), volume.to_string()]);
     }
@@ -142,7 +156,26 @@ pub(crate) fn apple_container_run_args(
         "-c".to_string(),
         apple_container_bootstrap_command(),
     ]);
-    args
+    Ok(args)
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn validate_apple_container_resource_limits(
+    resource_limits: &ResourceLimits,
+) -> Result<()> {
+    let Some(cpus) = resource_limits.cpu_quota else {
+        return Ok(());
+    };
+    let valid = cpus.is_finite()
+        && cpus >= 1.0
+        && cpus.fract() == 0.0
+        && cpus.to_string().parse::<i64>().is_ok();
+    if !valid {
+        return Err(Error::message(format!(
+            "Apple Container requires cpu_quota to be a positive whole number, got {cpus}"
+        )));
+    }
+    Ok(())
 }
 
 #[cfg(any(target_os = "macos", test))]
