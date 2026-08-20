@@ -19,6 +19,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260819.01] - 2026-08-19
+### Fixed
+- [web] Preserve run state during session refresh
+- [httpd] Require authentication for vault unlock and recovery (#1216)
+- [whatsapp] Treat a reply to the bot as addressing it (#1217)
+- [channels] Make the untrusted-turn tool ceiling configurable (#1219)
+- [whatsapp] Stop hardcoding the push name to "Moltis" (#1218)
+
 ## [20260818.10] - 2026-08-18
 ### Added
 - Add GPT-5.6 Luna routing coverage (#1213)
