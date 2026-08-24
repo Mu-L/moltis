@@ -347,6 +347,13 @@ WhatsApp supports rich media messages. Moltis handles each type:
 | **Document** | Downloaded up to 20 MB, saved in session media for local tools, and filename/MIME metadata dispatched as text |
 | **Location** | Resolves pending location tool requests, or dispatches coordinates to LLM |
 
+The 20 MB limit for saved images and documents is enforced *while streaming*, so
+a sender who understates the file size in the message metadata cannot make Moltis
+buffer an oversized payload — the download aborts as soon as the limit is crossed.
+Sender-supplied MIME types are normalized to a bare `type/subtype` before they are
+stored or shown to the agent. Download and persistence failures are reported in the
+conversation rather than handing the agent a path that does not exist.
+
 ```admonish info title="Voice Transcription"
 Voice message transcription requires an STT provider to be configured.
 See [Voice Services](voice.md) for setup instructions. Without STT,

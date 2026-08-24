@@ -19,7 +19,10 @@ use moltis_channels::{
 use crate::{
     access::{self, AccessDenied},
     config::WhatsAppAccountConfig,
-    inbound_media::{MAX_SAVED_INBOUND_FILE_BYTES, save_inbound_file},
+    inbound_media::{
+        DownloadError, MAX_SAVED_INBOUND_FILE_BYTES, download_bounded, safe_media_type,
+        save_inbound_file,
+    },
     otp::{OTP_CHALLENGE_MSG, OtpInitResult, OtpVerifyResult},
     state::{AccountState, AccountStateMap, has_bot_watermark},
 };
@@ -537,15 +540,13 @@ async fn handle_photo(
         return;
     };
     let caption = img.caption.as_deref().unwrap_or("").to_string();
-    let mime = img.mimetype.as_deref().unwrap_or("image/jpeg").to_string();
+    let mime = safe_media_type(Some(img.mimetype.as_deref().unwrap_or("image/jpeg")));
 
-    match client.download(img.as_ref()).await {
+    match download_bounded(client, img.as_ref()).await {
         Ok(image_data) => {
             debug!(account_id, size = image_data.len(), %mime, "downloaded WhatsApp image");
 
-            if image_data.len() <= MAX_SAVED_INBOUND_FILE_BYTES
-                && let Some(ref sink) = state.event_sink
-            {
+            if let Some(ref sink) = state.event_sink {
                 meta.documents = save_inbound_file(
                     sink,
                     &reply_to,
@@ -758,12 +759,9 @@ async fn handle_document(
     };
     let caption = doc.caption.as_deref().unwrap_or("").to_string();
     let filename = doc.file_name.as_deref().unwrap_or("unknown");
-    let mime = doc
-        .mimetype
-        .as_deref()
-        .unwrap_or("application/octet-stream");
+    let mime = safe_media_type(doc.mimetype.as_deref());
 
-    info!(account_id, filename, mime, "received document message");
+    info!(account_id, filename, %mime, "received document message");
 
     let text = if caption.is_empty() {
         format!("[Document received: {filename} ({mime})]")
@@ -793,8 +791,8 @@ async fn handle_document(
         return;
     }
 
-    match client.download(doc.as_ref()).await {
-        Ok(document_data) if document_data.len() <= MAX_SAVED_INBOUND_FILE_BYTES => {
+    match download_bounded(client, doc.as_ref()).await {
+        Ok(document_data) => {
             debug!(
                 account_id,
                 filename,
@@ -807,7 +805,7 @@ async fn handle_document(
                     &reply_to,
                     &document_data,
                     Some(filename),
-                    mime,
+                    &mime,
                     doc.file_sha256.as_deref(),
                 )
                 .await
@@ -815,13 +813,12 @@ async fn handle_document(
                 sink.dispatch_to_chat(&text, reply_to, meta).await;
             }
         },
-        Ok(document_data) => {
+        Err(DownloadError::TooLarge) => {
             warn!(
                 account_id,
                 filename,
-                size = document_data.len(),
                 limit = MAX_SAVED_INBOUND_FILE_BYTES,
-                "discarding oversized WhatsApp document"
+                "discarded oversized WhatsApp document"
             );
             if let Some(ref sink) = state.event_sink {
                 sink.dispatch_to_chat(
