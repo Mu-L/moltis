@@ -148,6 +148,10 @@ pub(crate) fn sandbox_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-sandbox")
 }
 
+pub fn sandbox_container_prefix_for_config(config: &moltis_config::MoltisConfig) -> String {
+    sandbox_container_prefix(&instance_slug(config))
+}
+
 pub(crate) fn browser_container_prefix(instance_slug: &str) -> String {
     format!("moltis-{instance_slug}-browser")
 }
@@ -637,5 +641,18 @@ pub(crate) fn restore_saved_local_llm_models(
     #[cfg(not(feature = "local-llm"))]
     {
         let _ = (registry, providers_config);
+    }
+}
+
+#[cfg(test)]
+mod container_prefix_tests {
+    use super::*;
+
+    #[test]
+    fn sandbox_prefix_for_config_is_identity_scoped() {
+        let prefix = sandbox_container_prefix_for_config(&moltis_config::MoltisConfig::default());
+
+        assert!(prefix.starts_with("moltis-"));
+        assert!(prefix.ends_with("-sandbox"));
     }
 }
