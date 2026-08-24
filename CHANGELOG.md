@@ -19,6 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260824.01] - 2026-08-24
+### Removed
+- Remove accidental handoff document
+
+
+### Fixed
+- [whatsapp] Render Markdown in outbound messages (#1220)
+- [memory] Bound local embedding encoder batches (#1236)
+- [memory] Normalize built-in backend config value (#1235)
+- [skills] Materialize recursive bundled sidecars (#1234)
+- [mcp] Resolve current client after server restart (#1231)
+- [browser] Support Browserless v2 containers (#1229)
+- [whatsapp] Persist inbound files for local tools (#1228)
+- [browser] Enable Obscura stealth mode by default (#1227)
+- [i18n] Update and improve zh-TW Traditional Chinese locale (#1225)
+- [cron] Deliver scheduled output to the originating chat (#1226)
+- [whatsapp] Bound inbound media downloads while streaming (#1233)
+
 ## [20260820.01] - 2026-08-20
 ### Fixed
 - [release] Harden transient integration checks
