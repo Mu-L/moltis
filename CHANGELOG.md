@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260826.01] - 2026-08-26
+### Fixed
+- [cron] Preserve delivered channel context (#1243)
+- [tools] Validate Brave search parameters (#1245)
+
 ## [20260824.01] - 2026-08-24
 ### Removed
 - Remove accidental handoff document
