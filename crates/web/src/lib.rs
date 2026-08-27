@@ -10,6 +10,7 @@ pub mod assets;
 mod container_management;
 pub mod error;
 pub mod gon;
+mod image_input;
 pub mod oauth;
 pub mod share;
 pub mod share_render;
