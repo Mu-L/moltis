@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260827.01] - 2026-08-27
+### Fixed
+- Fix Fastmail MCP OAuth scope registration (#1244)
+- [providers] Allow replacing preferred models (#1104)
+
 ## [20260826.01] - 2026-08-26
 ### Fixed
 - [cron] Preserve delivered channel context (#1243)
