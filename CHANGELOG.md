@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260831.01] - 2026-08-31
+### Fixed
+- [gateway] Pin Snyk Agent Scan (#1221)
+- [exec] Honor explicit null node selection (#1248)
+
 ## [20260830.01] - 2026-08-30
 ### Removed
 - [sandbox] Drop DMI sysfs masks on arm64 Docker daemons (#1247)
