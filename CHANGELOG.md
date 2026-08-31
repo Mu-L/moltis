@@ -19,6 +19,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260830.01] - 2026-08-30
+### Removed
+- [sandbox] Drop DMI sysfs masks on arm64 Docker daemons (#1247)
+
+
+### Fixed
+- [tools] Make object schemas OpenAI-safe (#1232)
+- [web] Validate sandbox image requests (#1222)
+
 ## [20260827.01] - 2026-08-27
 ### Fixed
 - Fix Fastmail MCP OAuth scope registration (#1244)
