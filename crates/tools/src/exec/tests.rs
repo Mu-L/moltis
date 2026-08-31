@@ -1181,7 +1181,10 @@ async fn test_exec_schema_allows_explicit_null_node_when_connected() {
     let tool = ExecTool::default().with_node_provider(Arc::new(ConnectedNodeProvider), None);
 
     let schema = tool.parameters_schema();
-    assert_eq!(schema["properties"]["node"]["type"], serde_json::json!(["string", "null"]));
+    assert_eq!(
+        schema["properties"]["node"]["type"],
+        serde_json::json!(["string", "null"])
+    );
 }
 
 #[tokio::test]
