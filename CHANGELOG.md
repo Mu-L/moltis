@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260901.01] - 2026-09-01
+### Fixed
+- [auth] Let Docker loopback-only deployments count as local (#1249)
+- Fix doctor validation for streamable HTTP MCP servers (#1251)
+
 ## [20260831.01] - 2026-08-31
 ### Fixed
 - [gateway] Pin Snyk Agent Scan (#1221)
