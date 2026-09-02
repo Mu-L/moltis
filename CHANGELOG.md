@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- [sandbox] Prevent session keys from sharing sandbox containers and persisted
+  homes. Thanks to [@DavidCarliez](https://github.com/DavidCarliez) for
+  responsibly reporting this issue.
+
 ## [20260902.02] - 2026-09-02
 
 ### Security
