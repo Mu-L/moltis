@@ -206,6 +206,8 @@ impl ConnectedClient {
 /// A pending RPC invocation waiting for a node to respond.
 pub struct PendingInvoke {
     pub request_id: String,
+    /// Connection allowed to complete this invoke. `None` is used for non-node requests.
+    pub expected_conn_id: Option<String>,
     pub sender: oneshot::Sender<serde_json::Value>,
     pub created_at: Instant,
 }
