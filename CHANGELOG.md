@@ -19,6 +19,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+## [20260902.02] - 2026-09-02
+
+### Security
+- [node-host] Replace shell-based remote execution with structured, allowlisted process invocation. Thanks to [@yubrew](https://github.com/yubrew) for responsibly reporting this issue.
+
 ## [20260902.01] - 2026-09-02
 ### Fixed
 - [providers] Remove unavailable Fireworks model
