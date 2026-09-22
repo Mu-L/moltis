@@ -1144,32 +1144,18 @@ jobs:
           fi
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "moltis-${VERSION}-macos.app.zip"
 
+      - name: Test notarization script
+        run: bash scripts/test-notarize-macos.sh
+
       - name: Notarize macOS app
         if: ${{ env.RELEASE_DRY_RUN != 'true' }}
         env:
           VERSION: ${{ steps.version.outputs.version }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          APPLE_API_PRIVATE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
         run: |
-          xcrun notarytool store-credentials "notarytool-profile" \
-            --apple-id "$APPLE_ID" \
-            --team-id "$APPLE_TEAM_ID" \
-            --password "$APPLE_ID_PASSWORD"
-
-          SUBMIT_OUT="$(xcrun notarytool submit "moltis-${VERSION}-macos.app.zip" \
-            --keychain-profile "notarytool-profile" \
-            --wait 2>&1)" || true
-          echo "$SUBMIT_OUT"
-
-          SUBMISSION_ID="$(echo "$SUBMIT_OUT" | grep '  id:' | head -1 | awk '{print $2}')"
-
-          if echo "$SUBMIT_OUT" | grep -q 'status: Invalid'; then
-            echo "::error::Notarization failed. Fetching log..."
-            xcrun notarytool log "$SUBMISSION_ID" \
-              --keychain-profile "notarytool-profile" || true
-            exit 1
-          fi
+          bash scripts/notarize-macos.sh "moltis-${VERSION}-macos.app.zip"
 
           # Staple the notarization ticket to the app bundle
           APP_PATH="apps/macos/.derivedData-ci/Build/Products/Release/Moltis.app"

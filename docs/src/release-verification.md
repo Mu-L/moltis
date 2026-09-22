@@ -12,6 +12,38 @@ Moltis releases use **multiple signing layers** to provide strong supply chain g
 All attestations are publicly visible on the
 [repository attestations page](https://github.com/moltis-org/moltis/attestations).
 
+## macOS Release Credentials
+
+The macOS app is signed with a Developer ID Application certificate and notarized
+using a **team App Store Connect API key** from
+[Users and Access > Integrations](https://appstoreconnect.apple.com/access/integrations/api).
+No Apple ID password or app-specific password is required for notarization.
+
+Maintainers configure these GitHub Actions repository secrets:
+
+| Secret | Value |
+|--------|-------|
+| `APPLE_API_PRIVATE_KEY` | Raw multiline contents of the downloaded `.p8` file, not base64 or a path |
+| `APPLE_API_KEY_ID` | Key ID from App Store Connect |
+| `APPLE_API_ISSUER_ID` | Issuer UUID for the team that created the key |
+| `APPLE_CERTIFICATE_BASE64` | Base64 Developer ID Application signing certificate (`.p12`) |
+| `APPLE_CERTIFICATE_PASSWORD` | Password protecting the `.p12` |
+| `APPLE_TEAM_ID` | Developer team ID used for code signing, not the API issuer UUID |
+
+Keep a secure backup of the API key; Apple permits only one download. Never commit
+it or expose it in build logs. `scripts/notarize-macos.sh` writes it to a private
+temporary directory, removes it on exit, and requires an `Accepted` JSON status
+and successful submission command before the workflow staples the app.
+The API key does not replace the signing certificate. Individual API keys (without
+a team issuer) are not supported by this release setup.
+
+Run `bash scripts/test-notarize-macos.sh` for mocked authentication and failure-path
+tests. Release dry runs skip signing and notarization, so they cannot validate
+Apple credentials. Validate credentials separately with `xcrun notarytool history
+--key /secure/path/AuthKey.p8 --key-id KEY_ID --issuer ISSUER_UUID`; a real signed-app
+submission is still needed to verify end-to-end notarization. Retire legacy
+`APPLE_ID` and `APPLE_ID_PASSWORD` secrets after the migrated release succeeds.
+
 ## Quick Verification
 
 The easiest way to verify a release is with the included script:
