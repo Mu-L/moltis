@@ -1,0 +1,1 @@
+{"id":"int-a979f85af592925e69e9047ea7df96e7","kind":"field_change","created_at":"2026-09-22T15:38:02.1865Z","actor":"Fabien Penso","issue_id":"moltis-dmkg","extra":{"field":"status","new_value":"closed","old_value":"open","reason":"Implemented and validated API-key notarization; committing and pushing release workflow changes."}}
